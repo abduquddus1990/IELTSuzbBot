@@ -1,0 +1,155 @@
+/* =========================================================================
+   IELTS & CEFR Mock AI — Telegram Mini App (WebApp) Custom Stylesheet
+   Supports Dark & Light themes, Telegram themeParams, 40-question navigator
+   grid, and live exam countdown timer warning animations.
+   ========================================================================= */
+
+:root {
+  --tg-bg-color: #020617;
+  --tg-secondary-bg-color: #0f172a;
+  --tg-text-color: #f8fafc;
+  --tg-hint-color: #94a3b8;
+  --tg-button-color: #2563eb;
+  --tg-button-text-color: #ffffff;
+  --card-border-color: rgba(51, 65, 85, 0.75);
+}
+
+html.light {
+  --tg-bg-color: #f8fafc;
+  --tg-secondary-bg-color: #ffffff;
+  --tg-text-color: #0f172a;
+  --tg-hint-color: #475569;
+  --card-border-color: rgba(203, 213, 225, 0.9);
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--tg-bg-color);
+  color: var(--tg-text-color);
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+}
+
+/* Light Mode Surface Overrides */
+html.light body {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+html.light header,
+html.light footer {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.light .glass-card {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.06);
+}
+
+html.light h1,
+html.light h2,
+html.light h3,
+html.light h4 {
+  color: #0f172a !important;
+}
+
+html.light textarea,
+html.light input[type="text"],
+html.light select {
+  background-color: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+/* Glassmorphism Card */
+.glass-card {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: border-color 0.2s ease, transform 0.15s ease;
+}
+
+/* Exam Switcher Active Button */
+.exam-switch-btn.active {
+  background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+}
+
+/* Module Tab Navigation */
+.module-tab {
+  border: 1px solid transparent;
+}
+
+.module-tab.active {
+  background: rgba(37, 99, 235, 0.16);
+  border-color: rgba(59, 130, 246, 0.45);
+  color: #60a5fa !important;
+}
+
+/* 40-Question Navigator Grid Buttons */
+.nav-q-btn {
+  height: 2rem;
+  border-radius: 0.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  background-color: rgba(30, 41, 59, 0.75);
+  color: #cbd5e1;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.nav-q-btn:hover {
+  border-color: #3b82f6;
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.nav-q-btn.answered {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  border-color: #60a5fa;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+
+.nav-q-btn.current {
+  outline: 2px solid #38bdf8;
+  outline-offset: 1px;
+}
+
+/* Countdown Timer Warning (< 5:00 remaining) */
+.timer-warning {
+  border-color: rgba(244, 63, 94, 0.7) !important;
+  background-color: rgba(136, 19, 55, 0.35) !important;
+  animation: pulseWarning 1.4s infinite ease-in-out;
+}
+
+.timer-warning #countdown-display {
+  color: #fb7185 !important;
+}
+
+@keyframes pulseWarning {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(244, 63, 94, 0);
+  }
+}
+
+/* Hide horizontal scrollbar on mobile tab strip */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

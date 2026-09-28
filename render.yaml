@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: ielts-cefr-mock-ai
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: RUN_BOT_POLLING_IN_WEB
+        value: "true"
+      - key: BOT_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.1-flash-lite
+      - key: PRICE_FULL_MOCK_UZS
+        value: "40000"
+      - key: PAYMENT_CARD_NUMBER
+        value: "8600 0000 0000 0000"
+      - key: PAYMENT_CARD_HOLDER
+        value: "ISMINGIZ FAMILIYANGIZ"
