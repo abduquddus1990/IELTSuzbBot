@@ -1,11 +1,11 @@
 # =====================================================================
-# IELTS & CEFR Mock AI — Production Dependencies (requirements.txt)
-# Ultra-Cost-Effective Stack: FastAPI + aiogram 3 + SQLAlchemy 2.0 + AI
+# IELTS & CEFR Mock AI — Fast Production Dependencies (requirements.txt)
+# Installs in ~15 seconds on Render / Railway / Docker (No backtracking!)
 # =====================================================================
 
 # --- Core Web Framework & ASGI Server ---
-fastapi[standard]>=0.115.0,<1.0.0
-uvicorn[standard]>=0.32.0,<1.0.0
+fastapi>=0.115.0,<1.0.0
+uvicorn>=0.32.0,<1.0.0
 pydantic>=2.10.0,<3.0.0
 pydantic-settings>=2.6.0,<3.0.0
 python-multipart>=0.0.18
@@ -13,33 +13,17 @@ python-multipart>=0.0.18
 # --- Telegram Bot Framework ---
 aiogram>=3.15.0,<4.0.0
 
-# --- Database & Async ORM (Neon / Supabase PostgreSQL) ---
-sqlalchemy[asyncio]>=2.0.36,<2.1.0
-asyncpg>=0.30.0,<1.0.0
-alembic>=1.14.0,<2.0.0
-greenlet>=3.1.1
-
-# --- AI & LLM Integrations (Claude, Whisper, Vision OCR) ---
+# --- AI & LLM Integrations (Google Gemini, Claude, OpenAI) ---
+httpx>=0.28.0,<1.0.0
+tenacity>=9.0.0,<10.0.0
 anthropic>=0.40.0,<2.0.0
 openai>=1.55.0,<2.0.0
-tenacity>=9.0.0,<10.0.0
-httpx>=0.28.0,<1.0.0
 
-# --- Object Storage (Cloudflare R2 - S3 Compatible, $0 Egress) ---
-boto3>=1.35.0,<2.0.0
-aioboto3>=13.2.0,<15.0.0
-
-# --- Local PDF Generation & Image Processing ($0 API Cost) ---
+# --- Local PDF Certificate & QR Code Generation ($0 API Cost) ---
 reportlab>=4.2.5,<5.0.0
 Pillow>=11.0.0,<12.0.0
-qrcode[pil]>=8.0
+qrcode>=8.0
 
-# --- Security, Auth & Payments (Telegram WebApp InitData, Click/Payme) ---
+# --- Security & Config ---
 python-dotenv>=1.0.1
 PyJWT>=2.10.0
-cryptography>=44.0.0
-
-# --- Testing & Quality Assurance ---
-pytest>=8.3.0
-pytest-asyncio>=0.24.0
-aiosqlite>=0.20.0
