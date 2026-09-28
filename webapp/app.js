@@ -645,18 +645,21 @@
   }
 
   function getResolvedListeningAudioUrl() {
+    const isGitHubPages = window.location.hostname.endsWith('github.io');
+    const prefix = isGitHubPages ? 'audio/' : '/webapp/audio/';
     const lData = (state.examData && state.examData.listening_data) || {};
     const rawUrl = lData.audio_url || '';
     if (
       rawUrl &&
       !rawUrl.includes('yourdomain.uz') &&
-      !rawUrl.includes('example.com')
+      !rawUrl.includes('example.com') &&
+      !isGitHubPages
     ) {
       return rawUrl;
     }
     return state.examType === 'CEFR'
-      ? '/webapp/audio/cefr_mock_01_listening.wav'
-      : '/webapp/audio/ielts_mock_01_listening.wav';
+      ? `${prefix}cefr_mock_01_listening.wav`
+      : `${prefix}ielts_mock_01_listening.wav`;
   }
 
   function bindNativeAudioEvents(nativeAudioEl) {
