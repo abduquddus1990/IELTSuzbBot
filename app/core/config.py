@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     WHISPER_MODEL: str = Field(default="whisper-1")
     OPENAI_VISION_FALLBACK_MODEL: str = Field(default="gpt-4o-mini")
     OCR_PROVIDER: Literal["gemini", "claude", "openai"] = Field(default="gemini")
+    # When every AI provider fails, return canned demo transcripts/evaluations instead of an error.
+    # Keep False in production: demo results are not the candidate's real work or score.
+    ALLOW_DEMO_AI_FALLBACK: bool = Field(default=False)
 
     # --- 5. Cloudflare R2 Storage (Zero-Egress S3 Compatible) ---
     R2_ACCOUNT_ID: str = Field(default="your_cloudflare_account_id")
@@ -105,6 +108,15 @@ class Settings(BaseSettings):
     PRICE_WRITING_ONLY_UZS: int = Field(default=15000)
     PRICE_SPEAKING_ONLY_UZS: int = Field(default=15000)
     FREE_TRIAL_CREDITS: int = Field(default=1)
+
+    # --- 7b. Free tier limits & advertising ---
+    DAILY_EXAM_LIMIT: int = Field(default=2)  # AI-scored exams (full mock / writing / speaking) per person per day
+    DAILY_TRANSCRIBE_LIMIT: int = Field(default=60)  # speaking answer transcriptions per person per day
+    IP_LIMIT_MULTIPLIER: int = Field(default=5)  # browser users sharing one IP (schools, offices)
+    BOT_USERNAME: str = Field(default="IELTSuzbBot")
+    ADSGRAM_BLOCK_ID: str = Field(default="")  # Telegram Mini App ads (https://adsgram.ai)
+    ADSENSE_CLIENT_ID: str = Field(default="")  # Google AdSense for the browser version, e.g. ca-pub-123...
+    ADSENSE_SLOT_ID: str = Field(default="")
 
     # --- 8. PDF Report Settings ---
     PDF_OUTPUT_DIR: str = Field(default="storage/reports")

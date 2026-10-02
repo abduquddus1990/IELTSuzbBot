@@ -1,0 +1,13 @@
+{
+  "name": "IELTS & CEFR Mock Test",
+  "short_name": "Mock Test",
+  "description": "Free IELTS Academic and Multilevel CEFR mock exams with AI feedback.",
+  "start_url": "/webapp/",
+  "scope": "/webapp/",
+  "display": "standalone",
+  "background_color": "#eef1f6",
+  "theme_color": "#1e3a8a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

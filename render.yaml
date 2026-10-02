@@ -9,17 +9,33 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
       - key: RUN_BOT_POLLING_IN_WEB
         value: "true"
+      - key: SECRET_KEY            # signs PDF report links — keep it secret and stable
+        generateValue: true
       - key: BOT_TOKEN
+        sync: false
+      - key: BOT_USERNAME
+        value: IELTSuzbBot
+      - key: ADMIN_TELEGRAM_IDS
         sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.1-flash-lite
-      - key: PRICE_FULL_MOCK_UZS
-        value: "40000"
-      - key: PAYMENT_CARD_NUMBER
-        value: "8600 0000 0000 0000"
-      - key: PAYMENT_CARD_HOLDER
-        value: "ISMINGIZ FAMILIYANGIZ"
+      - key: DATABASE_URL          # free Neon/Supabase Postgres: keeps daily limits across restarts
+        sync: false
+      - key: ALLOW_DEMO_AI_FALLBACK
+        value: "false"
+      - key: DAILY_EXAM_LIMIT
+        value: "2"
+      - key: ADSGRAM_BLOCK_ID      # Telegram Mini App ads (optional)
+        sync: false
+      - key: ADSENSE_CLIENT_ID     # Google AdSense for the browser version (optional)
+        sync: false
+      - key: ADSENSE_SLOT_ID
+        sync: false

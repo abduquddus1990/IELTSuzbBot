@@ -506,7 +506,7 @@ class PDFReportGeneratorService:
                 [
                     Paragraph("CEFR PROFICIENCY LEVEL", styles["hero_label"]),
                     Spacer(1, 3),
-                    Paragraph(_clean_and_escape(scores.cefr_level), styles["hero_value"]),
+                    Paragraph(_clean_and_escape(scores.cefr_level.replace("BELOW_B1", "Below B1")), styles["hero_value"]),
                     Spacer(1, 2),
                     Paragraph("Umumyevropa til bilish darajasi", styles["hero_sub"]),
                 ],

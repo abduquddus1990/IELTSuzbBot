@@ -9,6 +9,7 @@ from typing import Any
 
 from aiogram.types import Update
 from fastapi import FastAPI, Header, HTTPException, status
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -23,6 +24,7 @@ except ImportError:  # pragma: no cover
     engine = None  # type: ignore[assignment]
 
 import asyncio
+import logging
 import os
 
 bot_dispatcher = create_dispatcher()
@@ -35,6 +37,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if not reports_dir.is_absolute():
         reports_dir = BASE_DIR / reports_dir
     reports_dir.mkdir(parents=True, exist_ok=True)
+    if settings.APP_ENV == "production" and settings.SECRET_KEY.startswith("change-this"):
+        logging.getLogger(__name__).error(
+            "SECRET_KEY is the default value: PDF report links can be forged. Set SECRET_KEY in the environment."
+        )
 
     polling_task: asyncio.Task[Any] | None = None
     polling_bot = None
@@ -51,7 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 try:
                     await polling_bot.set_chat_menu_button(
                         menu_button=MenuButtonWebApp(
-                            text="📱 Imtihon (App)",
+                            text="📝 Mock Exam",
                             web_app=WebAppInfo(url=resolved_webapp),
                         )
                     )
@@ -99,6 +105,11 @@ def create_app() -> FastAPI:
 
     # Mount REST API v1 routes (/api/v1/...)
     app.include_router(api_v1_router)
+
+    @app.get("/", include_in_schema=False)
+    async def root_redirect() -> RedirectResponse:
+        """Browser visitors landing on the bare domain go straight to the exam app."""
+        return RedirectResponse(url="/webapp/")
 
     @app.get("/health", tags=["System"])
     async def health_check() -> dict[str, str]:

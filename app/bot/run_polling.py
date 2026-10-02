@@ -66,7 +66,7 @@ async def main() -> None:
             try:
                 await bot.set_chat_menu_button(
                     menu_button=MenuButtonWebApp(
-                        text="📱 Imtihon (App)",
+                        text="📝 Mock Exam",
                         web_app=WebAppInfo(url=resolved_webapp),
                     )
                 )

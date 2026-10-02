@@ -27,687 +27,64 @@ import copy
 import random
 from typing import Any, Literal
 
+from app.services.content import cefr_set1, ielts_set1
+from app.services.content.builders import flatten_questions
+from app.services.content.speaking_bank import build_speaking_data
+from app.services.content.writing_charts import TASK1_CHARTS, TASK1_PROMPT_OVERRIDES, chart_to_text
+
 ExamTypeLiteral = Literal["IELTS", "CEFR"]
 
 
-def _build_ielts_listening_data() -> dict[str, Any]:
-    """Construct 40-question IELTS Academic Listening mock data and answer key."""
-    answer_key: dict[str, str] = {
-        # Part 1: University Sports Club Registration (Form Completion)
-        "1": "Henderson",
-        "2": "0789432109",
-        "3": "intermediate",
-        "4": "swimming",
-        "5": "45",
-        "6": "locker",
-        "7": "medical",
-        "8": "Tuesday",
-        "9": "reception",
-        "10": "student card",
-        # Part 2: City Eco-Museum Guided Tour (Multiple Choice & Map Matching)
-        "11": "B",
-        "12": "C",
-        "13": "A",
-        "14": "B",
-        "15": "C",
-        "16": "F",
-        "17": "D",
-        "18": "A",
-        "19": "G",
-        "20": "E",
-        # Part 3: Academic Tutorial on Urban Microclimates (Multiple Choice & Matching)
-        "21": "C",
-        "22": "A",
-        "23": "B",
-        "24": "C",
-        "25": "A",
-        "26": "D",
-        "27": "B",
-        "28": "F",
-        "29": "C",
-        "30": "E",
-        # Part 4: Lecture on Bio-Inspired Architecture (Note Completion)
-        "31": "ventilation",
-        "32": "termites",
-        "33": "concrete",
-        "34": "sunlight",
-        "35": "algae",
-        "36": "vibration",
-        "37": "bridges",
-        "38": "maintenance",
-        "39": "sensors",
-        "40": "recyclable",
-    }
-
-    featured_questions: list[dict[str, Any]] = [
-        {
-            "id": "1",
-            "number": 1,
-            "part": 1,
-            "type": "fill_in_blank",
-            "prompt": "Applicant Surname: Sarah ________ (spell the surname mentioned in the recording).",
-        },
-        {
-            "id": "2",
-            "number": 2,
-            "part": 1,
-            "type": "fill_in_blank",
-            "prompt": "Contact mobile number: ________.",
-        },
-        {
-            "id": "3",
-            "number": 3,
-            "part": 1,
-            "type": "fill_in_blank",
-            "prompt": "Current fitness level selected: ________ course.",
-        },
-        {
-            "id": "4",
-            "number": 4,
-            "part": 1,
-            "type": "fill_in_blank",
-            "prompt": "Primary facility requested in addition to the gym: ________ pool.",
-        },
-        {
-            "id": "5",
-            "number": 5,
-            "part": 1,
-            "type": "fill_in_blank",
-            "prompt": "Monthly membership fee with university discount: £________.",
-        },
-        {
-            "id": "6",
-            "number": 6,
-            "part": 1,
-            "type": "fill_in_blank",
-            "prompt": "Annual fee includes free use of a personal ________.",
-        },
-        {
-            "id": "7",
-            "number": 7,
-            "part": 1,
-            "type": "fill_in_blank",
-            "prompt": "New members must complete a short ________ questionnaire before their first session.",
-        },
-        {
-            "id": "8",
-            "number": 8,
-            "part": 1,
-            "type": "fill_in_blank",
-            "prompt": "Free induction workshop day: every ________ evening.",
-        },
-        {
-            "id": "9",
-            "number": 9,
-            "part": 1,
-            "type": "fill_in_blank",
-            "prompt": "Meet the instructor beside the main ________ desk.",
-        },
-        {
-            "id": "10",
-            "number": 10,
-            "part": 1,
-            "type": "fill_in_blank",
-            "prompt": "Document required for identity verification: ________.",
-        },
-        {
-            "id": "11",
-            "number": 11,
-            "part": 2,
-            "type": "multiple_choice",
-            "prompt": "Why was the City Eco-Museum originally founded in 1998?",
-            "options": [
-                "A) To replace the old municipal library",
-                "B) To preserve industrial heritage and promote renewable energy",
-                "C) To host international trade conferences",
-            ],
-        },
-        {
-            "id": "12",
-            "number": 12,
-            "part": 2,
-            "type": "multiple_choice",
-            "prompt": "What is the most popular new exhibition this season?",
-            "options": [
-                "A) Steam Engines of the 19th Century",
-                "B) Arctic Photography Gallery",
-                "C) Interactive Smart Cities Pavilion",
-            ],
-        },
-    ]
-
-    # Populate remaining questions 13..40 so the frontend can render all 40 inputs
-    existing_ids = {q["id"] for q in featured_questions}
-    for q_num in range(1, 41):
-        q_id = str(q_num)
-        if q_id in existing_ids:
-            continue
-        if q_num <= 20:
-            featured_questions.append(
-                {
-                    "id": q_id,
-                    "number": q_num,
-                    "part": 2,
-                    "type": "multiple_choice" if q_num <= 15 else "matching",
-                    "prompt": f"Part 2 Question {q_num}: Select the correct option or map letter (A-G).",
-                    "options": ["A", "B", "C", "D", "E", "F", "G"] if q_num > 15 else ["A", "B", "C"],
-                }
-            )
-        elif q_num <= 30:
-            featured_questions.append(
-                {
-                    "id": q_id,
-                    "number": q_num,
-                    "part": 3,
-                    "type": "multiple_choice" if q_num <= 25 else "matching",
-                    "prompt": f"Part 3 Question {q_num} (Urban Microclimates Tutorial): Choose the correct letter.",
-                    "options": ["A", "B", "C"] if q_num <= 25 else ["A", "B", "C", "D", "E", "F"],
-                }
-            )
-        else:
-            featured_questions.append(
-                {
-                    "id": q_id,
-                    "number": q_num,
-                    "part": 4,
-                    "type": "fill_in_blank",
-                    "prompt": (
-                        f"Part 4 Question {q_num} (Bio-Inspired Architecture): "
-                        "Write ONE WORD ONLY from the lecture."
-                    ),
-                }
-            )
-
+def _listening_from_set(module: Any, set_id: str, duration: int, instructions: str) -> dict[str, Any]:
+    parts = copy.deepcopy(module.LISTENING_PARTS)
+    for part in parts:
+        part["audio_url"] = f"/webapp/audio/{set_id}_part{part['number']}.mp3"
     return {
-        "audio_url": "/webapp/audio/ielts_mock_01_listening.wav",
-        "duration_minutes": 30,
-        "instructions": (
-            "Listen to the 4 recorded sections and answer questions 1 to 40. "
-            "Write NO MORE THAN TWO WORDS AND/OR A NUMBER for completion items."
-        ),
-        "questions": featured_questions,
-        "answer_key": answer_key,
+        "set_id": set_id,
+        "duration_minutes": duration,
+        "instructions": instructions,
+        "parts": parts,
+        "questions": flatten_questions(parts, "part"),
+        "answer_key": dict(module.LISTENING_ANSWER_KEY),
     }
+
+
+def _reading_from_set(module: Any, set_id: str, reading_module: str) -> dict[str, Any]:
+    passages = copy.deepcopy(module.READING_PASSAGES)
+    for passage in passages:
+        passage["id"] = f"P{passage['number']}"
+        passage["passage_number"] = passage["number"]
+        passage["content"] = "\n\n".join(passage["paragraphs"])
+    return {
+        "set_id": set_id,
+        "duration_minutes": 60,
+        "module": reading_module,
+        "passages": passages,
+        "questions": flatten_questions(passages, "passage"),
+        "answer_key": dict(module.READING_ANSWER_KEY),
+    }
+
+
+def _build_ielts_listening_data() -> dict[str, Any]:
+    return _listening_from_set(
+        ielts_set1, "ielts_set1", 30,
+        "You will hear four recordings. Each recording is played ONCE. Answer questions 1–40.",
+    )
 
 
 def _build_ielts_reading_data() -> dict[str, Any]:
-    """Construct 3 Academic Reading passages, 40 questions, and deterministic answer key."""
-    answer_key: dict[str, str] = {
-        # Passage 1: The Rise of Vertical Farming in Megacities (Q1 - Q13)
-        "1": "TRUE",
-        "2": "FALSE",
-        "3": "NOT GIVEN",
-        "4": "TRUE",
-        "5": "FALSE",
-        "6": "TRUE",
-        "7": "nutrients",
-        "8": "LED",
-        "9": "pesticides",
-        "10": "transport",
-        "11": "pollination",
-        "12": "B",
-        "13": "C",
-        # Passage 2: Cognitive Benefits of Multilingualism Across the Lifespan (Q14 - Q26)
-        "14": "iv",
-        "15": "ii",
-        "16": "vi",
-        "17": "i",
-        "18": "v",
-        "19": "A",
-        "20": "C",
-        "21": "B",
-        "22": "D",
-        "23": "executive",
-        "24": "attention",
-        "25": "dementia",
-        "26": "plasticity",
-        # Passage 3: Deep-Sea Hydrothermal Vents and the Origins of Life (Q27 - Q40)
-        "27": "YES",
-        "28": "NO",
-        "29": "NOT GIVEN",
-        "30": "YES",
-        "31": "NO",
-        "32": "C",
-        "33": "A",
-        "34": "D",
-        "35": "B",
-        "36": "chemosynthesis",
-        "37": "alkaline",
-        "38": "membranes",
-        "39": "catalysts",
-        "40": "A",
-    }
-
-    passages: list[dict[str, Any]] = [
-        {
-            "id": "P1",
-            "passage_number": 1,
-            "title": "Passage 1: The Rise of Vertical Farming in Megacities",
-            "question_range": "1-13",
-            "content": (
-                "By 2050, nearly 70 percent of the global population is projected to reside in urban areas. "
-                "Traditional horizontal agriculture faces mounting pressures from soil degradation, freshwater "
-                "scarcity, and volatile weather patterns. Vertical farming—cultivating crops in vertically "
-                "stacked layers inside controlled-environment buildings—offers a promising supplement to "
-                "conventional farming.\n\n"
-                "Instead of soil, most commercial vertical farms rely on hydroponic or aeroponic systems in "
-                "which plant roots are misted or submerged in solutions rich in mineral nutrients. Because "
-                "water is continuously recycled in closed-loop circuits, vertical farms consume up to 95 percent "
-                "less water than open-field farms. Artificial LED arrays tuned to specific red and blue wavelengths "
-                "drive photosynthesis year-round, eliminating dependence on seasonal sunlight.\n\n"
-                "Furthermore, sealed indoor facilities prevent insect infestations, meaning crops can be grown "
-                "entirely without chemical pesticides. Locating production inside metropolitan distribution hubs "
-                "drastically reduces food transport miles and spoilage. However, high electricity demand and the "
-                "need for manual or robotic pollination remain significant economic hurdles for staple calorie "
-                "crops such as wheat and rice."
-            ),
-        },
-        {
-            "id": "P2",
-            "passage_number": 2,
-            "title": "Passage 2: Cognitive Benefits of Multilingualism Across the Lifespan",
-            "question_range": "14-26",
-            "content": (
-                "For much of the early twentieth century, educators feared that exposing children to two "
-                "languages simultaneously would cause linguistic confusion. Modern neuroimaging has overturned "
-                "this view, demonstrating that managing multiple linguistic systems strengthens the brain's "
-                "executive control network.\n\n"
-                "Because both languages remain active in a bilingual speaker's mind even when only one is being "
-                "used, the prefrontal cortex must constantly monitor context, select the target lexicon, and "
-                "inhibit interference from the non-target language. This continuous mental workout enhances "
-                "selective attention and task-switching efficiency.\n\n"
-                "Longitudinal clinical studies further suggest that lifelong bilingualism builds cognitive "
-                "reserve, delaying the behavioral onset of Alzheimer's disease and other forms of dementia by "
-                "four to five years compared with monolingual peers, while promoting structural neuro-plasticity."
-            ),
-        },
-        {
-            "id": "P3",
-            "passage_number": 3,
-            "title": "Passage 3: Deep-Sea Hydrothermal Vents and the Origins of Life",
-            "question_range": "27-40",
-            "content": (
-                "When oceanographers discovered hydrothermal vents along the Galápagos Rift in 1977, they were "
-                "astonished to find thriving ecosystems in pitch darkness more than two kilometers below the "
-                "ocean surface. Rather than relying on solar energy, microorganisms at these vents use "
-                "chemosynthesis, oxidizing hydrogen sulfide and methane to fix carbon into organic molecules.\n\n"
-                "Evolutionary biochemists now hypothesize that alkaline hydrothermal vents—such as the Lost City "
-                "field—provided the ideal geochemical reactor for the emergence of life on early Earth. Porous "
-                "mineral chimneys naturally create proton gradients across thin inorganic walls, mimicking "
-                "modern cellular membranes, while iron-sulfur minerals act as primitive catalysts for "
-                "prebiotic carbon fixation."
-            ),
-        },
-    ]
-
-    questions: list[dict[str, Any]] = [
-        {
-            "id": "1",
-            "number": 1,
-            "passage": 1,
-            "type": "true_false_not_given",
-            "prompt": "Vertical farming uses up to 95% less water than conventional open-field farming.",
-            "options": ["TRUE", "FALSE", "NOT GIVEN"],
-        },
-        {
-            "id": "2",
-            "number": 2,
-            "passage": 1,
-            "type": "true_false_not_given",
-            "prompt": "Vertical farms rely exclusively on natural sunlight reflected through glass mirrors.",
-            "options": ["TRUE", "FALSE", "NOT GIVEN"],
-        },
-        {
-            "id": "3",
-            "number": 3,
-            "passage": 1,
-            "type": "true_false_not_given",
-            "prompt": "More than half of all supermarkets in Europe already sell vertically farmed produce.",
-            "options": ["TRUE", "FALSE", "NOT GIVEN"],
-        },
-        {
-            "id": "4",
-            "number": 4,
-            "passage": 1,
-            "type": "true_false_not_given",
-            "prompt": "Growing staple crops like wheat indoors is currently limited by high energy costs.",
-            "options": ["TRUE", "FALSE", "NOT GIVEN"],
-        },
-        {
-            "id": "5",
-            "number": 5,
-            "passage": 1,
-            "type": "true_false_not_given",
-            "prompt": "Hydroponic systems require heavier applications of chemical herbicides than soil farming.",
-            "options": ["TRUE", "FALSE", "NOT GIVEN"],
-        },
-        {
-            "id": "6",
-            "number": 6,
-            "passage": 1,
-            "type": "true_false_not_given",
-            "prompt": "Placing vertical farms inside cities lowers transportation distances.",
-            "options": ["TRUE", "FALSE", "NOT GIVEN"],
-        },
-        {
-            "id": "7",
-            "number": 7,
-            "passage": 1,
-            "type": "fill_in_blank",
-            "prompt": "Plant roots in hydroponic systems absorb dissolved mineral ________ from water.",
-        },
-        {
-            "id": "8",
-            "number": 8,
-            "passage": 1,
-            "type": "fill_in_blank",
-            "prompt": "Specialized ________ lighting arrays provide wavelengths needed for photosynthesis.",
-        },
-        {
-            "id": "9",
-            "number": 9,
-            "passage": 1,
-            "type": "fill_in_blank",
-            "prompt": "Because indoor environments are sealed from insects, chemical ________ are unnecessary.",
-        },
-        {
-            "id": "10",
-            "number": 10,
-            "passage": 1,
-            "type": "fill_in_blank",
-            "prompt": "Urban cultivation cuts down on food ________ miles and post-harvest spoilage.",
-        },
-    ]
-
-    existing_ids = {q["id"] for q in questions}
-    for q_num in range(1, 41):
-        q_id = str(q_num)
-        if q_id in existing_ids:
-            continue
-        passage_idx = 1 if q_num <= 13 else (2 if q_num <= 26 else 3)
-        expected_val = answer_key[q_id]
-        if expected_val in {"TRUE", "FALSE", "NOT GIVEN"}:
-            q_type = "true_false_not_given"
-            opts = ["TRUE", "FALSE", "NOT GIVEN"]
-        elif expected_val in {"YES", "NO"}:
-            q_type = "yes_no_not_given"
-            opts = ["YES", "NO", "NOT GIVEN"]
-        elif expected_val in {"A", "B", "C", "D"}:
-            q_type = "multiple_choice"
-            opts = ["A", "B", "C", "D"]
-        elif expected_val in {"i", "ii", "iii", "iv", "v", "vi"}:
-            q_type = "matching_headings"
-            opts = ["i", "ii", "iii", "iv", "v", "vi"]
-        else:
-            q_type = "fill_in_blank"
-            opts = None
-
-        q_entry: dict[str, Any] = {
-            "id": q_id,
-            "number": q_num,
-            "passage": passage_idx,
-            "type": q_type,
-            "prompt": f"Passage {passage_idx} — Question {q_num}: Provide the correct response based on the text.",
-        }
-        if opts is not None:
-            q_entry["options"] = opts
-        questions.append(q_entry)
-
-    return {
-        "duration_minutes": 60,
-        "module": "academic",
-        "passages": passages,
-        "questions": questions,
-        "answer_key": answer_key,
-    }
+    return _reading_from_set(ielts_set1, "ielts_set1", "academic")
 
 
 def _build_cefr_listening_data() -> dict[str, Any]:
-    """Construct 40-question Uzbekistan BBA Multi-Level (B1-C1) Listening data and answer key."""
-    answer_key: dict[str, str] = {
-        # Part 1 (Q1-Q8): Short Dialogues
-        "1": "B",
-        "2": "A",
-        "3": "C",
-        "4": "B",
-        "5": "A",
-        "6": "C",
-        "7": "B",
-        "8": "A",
-        # Part 2 (Q9-Q14): Campus Announcement Completion
-        "9": "library",
-        "10": "Thursday",
-        "11": "passport",
-        "12": "15",
-        "13": "certificate",
-        "14": "auditorium",
-        # Part 3 (Q15-Q20): Speaker Matching
-        "15": "D",
-        "16": "A",
-        "17": "F",
-        "18": "B",
-        "19": "E",
-        "20": "C",
-        # Part 4 (Q21-Q25): Map Labeling
-        "21": "G",
-        "22": "C",
-        "23": "A",
-        "24": "E",
-        "25": "B",
-        # Part 5 (Q26-Q31): Radio Interview on Green Tourism in Uzbekistan
-        "26": "B",
-        "27": "C",
-        "28": "A",
-        "29": "B",
-        "30": "C",
-        "31": "A",
-        # Part 6 (Q32-Q40): Academic Lecture Summary Completion
-        "32": "solar",
-        "33": "irrigation",
-        "34": "sensors",
-        "35": "cotton",
-        "36": "efficiency",
-        "37": "satellites",
-        "38": "training",
-        "39": "exports",
-        "40": "sustainable",
-    }
-
-    questions: list[dict[str, Any]] = []
-    for q_num in range(1, 41):
-        q_id = str(q_num)
-        ans = answer_key[q_id]
-        if q_num <= 8:
-            questions.append(
-                {
-                    "id": q_id,
-                    "number": q_num,
-                    "part": 1,
-                    "type": "multiple_choice",
-                    "prompt": f"Part 1 Dialogue {q_num}: Choose the best answer (A, B, or C).",
-                    "options": ["A", "B", "C"],
-                }
-            )
-        elif q_num <= 14:
-            questions.append(
-                {
-                    "id": q_id,
-                    "number": q_num,
-                    "part": 2,
-                    "type": "fill_in_blank",
-                    "prompt": f"Part 2 Note {q_num}: Write ONE WORD OR A NUMBER from the announcement.",
-                }
-            )
-        elif q_num <= 25:
-            part_no = 3 if q_num <= 20 else 4
-            questions.append(
-                {
-                    "id": q_id,
-                    "number": q_num,
-                    "part": part_no,
-                    "type": "matching",
-                    "prompt": f"Part {part_no} Matching {q_num}: Match the item with the correct letter (A-G).",
-                    "options": ["A", "B", "C", "D", "E", "F", "G"],
-                }
-            )
-        elif q_num <= 31:
-            questions.append(
-                {
-                    "id": q_id,
-                    "number": q_num,
-                    "part": 5,
-                    "type": "multiple_choice",
-                    "prompt": f"Part 5 Interview Question {q_num} (Eco-Tourism in Uzbekistan): Select A, B, or C.",
-                    "options": ["A", "B", "C"],
-                }
-            )
-        else:
-            _ = ans
-            questions.append(
-                {
-                    "id": q_id,
-                    "number": q_num,
-                    "part": 6,
-                    "type": "fill_in_blank",
-                    "prompt": f"Part 6 Lecture Summary {q_num}: Complete the gap with ONE WORD ONLY.",
-                }
-            )
-
-    return {
-        "audio_url": "/webapp/audio/cefr_mock_01_listening.wav",
-        "duration_minutes": 35,
-        "instructions": (
-            "O'zbekiston BBA Multi-Level Listening bo'limi (6 qism, 40 ta savol). "
-            "Har bir javobni diqqat bilan belgilang yoki yozing."
-        ),
-        "questions": questions,
-        "answer_key": answer_key,
-    }
+    return _listening_from_set(
+        cefr_set1, "cefr_set1", 35,
+        "You will hear six parts. Each recording is played ONCE. Answer questions 1–40.",
+    )
 
 
 def _build_cefr_reading_data() -> dict[str, Any]:
-    """Construct 40-question Uzbekistan BBA Multi-Level (B1-C1) Reading data and answer key."""
-    answer_key: dict[str, str] = {
-        # Part 1 (Q1-Q6): Gap-fill short text (B1)
-        "1": "community",
-        "2": "volunteers",
-        "3": "workshops",
-        "4": "digital",
-        "5": "schedule",
-        "6": "certificates",
-        # Part 2 (Q7-Q14): Matching notices/advertisements (B1+)
-        "7": "C",
-        "8": "A",
-        "9": "F",
-        "10": "B",
-        "11": "E",
-        "12": "D",
-        "13": "G",
-        "14": "H",
-        # Part 3 (Q15-Q20): Heading Matching (B2)
-        "15": "D",
-        "16": "A",
-        "17": "F",
-        "18": "B",
-        "19": "C",
-        "20": "E",
-        # Part 4 (Q21-Q29): Long Analytical Text Comprehension (B2+)
-        "21": "B",
-        "22": "C",
-        "23": "A",
-        "24": "D",
-        "25": "TRUE",
-        "26": "FALSE",
-        "27": "NOT GIVEN",
-        "28": "TRUE",
-        "29": "FALSE",
-        # Part 5 (Q30-Q40): C1 Academic Text Summary & Multiple Choice
-        "30": "infrastructure",
-        "31": "renewable",
-        "32": "hydropower",
-        "33": "grid",
-        "34": "investment",
-        "35": "emissions",
-        "36": "B",
-        "37": "A",
-        "38": "C",
-        "39": "D",
-        "40": "B",
-    }
-
-    passages: list[dict[str, Any]] = [
-        {
-            "id": "CEFR-P1",
-            "passage_number": 1,
-            "title": "Parts 1-2: Youth Digital Literacy Centres in Tashkent & Samarkand (B1/B2)",
-            "question_range": "1-14",
-            "content": (
-                "Across Uzbekistan, local mahalla youth centres have launched a new initiative to expand "
-                "practical skills among high-school graduates. Supported by experienced industry volunteers, "
-                "these centres organize weekend workshops focused on coding, graphic design, and digital "
-                "entrepreneurship. Participants can choose a flexible evening schedule and receive official "
-                "completion certificates after presenting their capstone team project."
-            ),
-        },
-        {
-            "id": "CEFR-P2",
-            "passage_number": 2,
-            "title": "Parts 3-4: Silk Road Logistics and Modern Rail Corridors (B2)",
-            "question_range": "15-29",
-            "content": (
-                "As landlocked Central Asian economies deepen trade integration with both Europe and East Asia, "
-                "modernizing rail and dry-port logistics has become a strategic priority. Electrified freight "
-                "corridors and automated customs clearance terminals have shortened transit times by nearly "
-                "forty percent over the past decade, while lowering carbon emissions per tonne-kilometer."
-            ),
-        },
-        {
-            "id": "CEFR-P3",
-            "passage_number": 3,
-            "title": "Part 5: Clean Energy Transition and Smart Grid Architecture (C1)",
-            "question_range": "30-40",
-            "content": (
-                "Transitioning national electricity networks toward a high share of solar, wind, and modern "
-                "hydropower requires far more than building generation plants. Utility operators must upgrade "
-                "transmission infrastructure and deploy AI-assisted smart grid balancing systems capable of "
-                "absorbing intermittent renewable supply. Sustained private investment and regional power-pool "
-                "agreements are projected to cut greenhouse gas emissions substantially by 2035."
-            ),
-        },
-    ]
-
-    questions: list[dict[str, Any]] = []
-    for q_num in range(1, 41):
-        q_id = str(q_num)
-        ans = answer_key[q_id]
-        if ans in {"TRUE", "FALSE", "NOT GIVEN"}:
-            q_type = "true_false_not_given"
-            opts = ["TRUE", "FALSE", "NOT GIVEN"]
-        elif len(ans) == 1 and ans.isupper():
-            q_type = "multiple_choice" if ans in {"A", "B", "C", "D"} else "matching"
-            opts = ["A", "B", "C", "D"] if q_type == "multiple_choice" else ["A", "B", "C", "D", "E", "F", "G", "H"]
-        else:
-            q_type = "fill_in_blank"
-            opts = None
-
-        q_item: dict[str, Any] = {
-            "id": q_id,
-            "number": q_num,
-            "passage": 1 if q_num <= 14 else (2 if q_num <= 29 else 3),
-            "type": q_type,
-            "prompt": f"BBA Reading Question {q_num}: Enter or select the correct answer.",
-        }
-        if opts is not None:
-            q_item["options"] = opts
-        questions.append(q_item)
-
-    return {
-        "duration_minutes": 60,
-        "module": "cefr_multilevel",
-        "passages": passages,
-        "questions": questions,
-        "answer_key": answer_key,
-    }
+    return _reading_from_set(cefr_set1, "cefr_set1", "cefr_multilevel")
 
 
 DEMO_TESTS: list[dict[str, Any]] = [
@@ -880,7 +257,7 @@ IELTS_RANDOM_PROMPT_POOL: list[dict[str, Any]] = [
         "speaking_data": {
             "part_1_questions": [
                 "What is the weather like in your hometown during different seasons?",
-                "Do you va your family recycle household items or save electricity at home?",
+                "Do you and your family recycle household items or save electricity at home?",
                 "Do you enjoy spending time in nature parks or botanical gardens?",
             ],
             "part_2_cue_card": (
@@ -1616,6 +993,24 @@ def _build_all_random_variants() -> None:
 
 _build_all_random_variants()
 
+
+def _enrich_variants() -> None:
+    """Attach Task 1 charts and the expanded speaking question bank to every variant."""
+    for exam in DEMO_TESTS:
+        vid = exam["id"]
+        exam.setdefault("variant_number", 1)
+        writing = exam["writing_data"]
+        if vid in TASK1_PROMPT_OVERRIDES:
+            writing["task_1_prompt"] = TASK1_PROMPT_OVERRIDES[vid]
+        chart = TASK1_CHARTS.get(vid)
+        if chart is not None:
+            writing["task_1_chart_url"] = f"/api/v1/tests/{vid}/task1-chart.png"
+            writing["task_1_chart_text"] = chart_to_text(chart)
+        exam["speaking_data"] = build_speaking_data(vid, exam["variant_number"], exam["speaking_data"])
+
+
+_enrich_variants()
+
 DEMO_EXAM_BANK: dict[str, dict[str, Any]] = {exam["id"]: exam for exam in DEMO_TESTS}
 
 
@@ -1681,6 +1076,9 @@ def sanitize_test_for_client(test_dict: dict[str, Any]) -> dict[str, Any]:
         section = sanitized.get(section_key)
         if isinstance(section, dict):
             section.pop("answer_key", None)
+            for part in section.get("parts") or []:
+                if isinstance(part, dict):
+                    part.pop("script", None)
             questions = section.get("questions")
             if isinstance(questions, list):
                 for q in questions:
@@ -1690,6 +1088,9 @@ def sanitize_test_for_client(test_dict: dict[str, Any]) -> dict[str, Any]:
                         q.pop("answer", None)
 
     sanitized.pop("answer_key", None)
+    writing = sanitized.get("writing_data")
+    if isinstance(writing, dict):
+        writing.pop("task_1_chart_text", None)
     return sanitized
 
 

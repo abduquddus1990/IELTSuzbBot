@@ -11,7 +11,6 @@ from app.bot.handlers import exam_flow_router, setup_bot_routers, start_router
 from app.bot.keyboards import (
     build_exam_mode_keyboard,
     build_exam_type_keyboard,
-    build_listening_reading_keyboard,
     build_main_menu_keyboard,
 )
 from app.bot.states import ExamSessionStates
@@ -38,7 +37,6 @@ __all__ = [
     "ExamSessionStates",
     "build_exam_mode_keyboard",
     "build_exam_type_keyboard",
-    "build_listening_reading_keyboard",
     "build_main_menu_keyboard",
     "create_bot",
     "create_dispatcher",

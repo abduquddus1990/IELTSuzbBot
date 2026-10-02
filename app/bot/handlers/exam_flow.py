@@ -13,24 +13,19 @@ Handles:
 
 from __future__ import annotations
 
+import base64
+import binascii
+import html
 import io
-import json
 import logging
-import re
-import uuid
-from datetime import datetime, timezone
 from typing import Any, Literal
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.filters import ExceptionTypeFilter, StateFilter
+from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, Message
 
-from app.bot.keyboards.exam_kb import (
-    build_exam_mode_keyboard,
-    build_exam_type_keyboard,
-    build_listening_reading_keyboard,
-    build_main_menu_keyboard,
-)
+from app.bot.keyboards.exam_kb import build_exam_mode_keyboard, build_main_menu_keyboard
 from app.bot.states.exam_states import ExamSessionStates
 from app.core.config import settings
 from app.schemas.report import band_to_cefr_75_score
@@ -52,20 +47,15 @@ from app.schemas.writing import (
     WritingTaskInput,
 )
 from app.services.demo_exam_bank import get_demo_test_by_id, get_random_demo_test
-from app.services.exam_orchestrator import get_exam_orchestrator_service
+from app.services import usage_limits
+from app.services.chart_renderer import render_task1_chart
 from app.services.gemini_evaluator import (
     evaluate_speaking_via_gemini,
     evaluate_writing_via_gemini,
     transcribe_audio_via_gemini,
     transcribe_handwritten_image_via_gemini,
 )
-from app.services.reading_listening_scorer import (
-    convert_listening_raw_to_band,
-    convert_raw_to_cefr_standard_score,
-    convert_reading_raw_to_band,
-    round_to_half_band,
-    score_reading_or_listening,
-)
+from app.services.reading_listening_scorer import round_to_half_band
 from app.services.speaking_evaluator import (
     analyze_speech_telemetry,
     build_zero_speaking_result,
@@ -90,6 +80,16 @@ router = Router(name="exam_flow_router")
 # =====================================================================
 # 1. API KEY PLACEHOLDER DETECTION & GRACEFUL DEMO FALLBACK ENGINE
 # =====================================================================
+
+
+class AIServiceUnavailableError(RuntimeError):
+    """Raised when no AI provider could process a submission and demo fallback is disabled."""
+
+
+def _ensure_demo_fallback_allowed(what: str) -> None:
+    """Refuse to substitute canned demo output unless `ALLOW_DEMO_AI_FALLBACK` is enabled."""
+    if not settings.ALLOW_DEMO_AI_FALLBACK:
+        raise AIServiceUnavailableError(f"{what} is temporarily unavailable (all AI providers failed).")
 
 
 def is_placeholder_api_key(api_key: str | None) -> bool:
@@ -130,6 +130,7 @@ async def transcribe_image_with_demo_fallback(
         except Exception as exc:
             logger.warning("Gemini Vision OCR failed (%s); using demo OCR fallback.", exc)
 
+    _ensure_demo_fallback_allowed("Handwriting OCR")
     if task_number == 1:
         return (
             "The provided chart illustrates the proportion of households with fiber-optic internet "
@@ -176,6 +177,7 @@ async def transcribe_voice_with_demo_fallback(
         except Exception as exc:
             logger.warning("Live Gemini Audio STT failed (%s); using demo STT fallback.", exc)
 
+    _ensure_demo_fallback_allowed("Speech-to-text")
     sample_transcripts: dict[int, str] = {
         1: (
             "Currently I am working as a software developer and studying English every evening "
@@ -283,21 +285,35 @@ def _build_demo_writing_evaluation(
     return verify_and_recalculate_scores(raw_result)
 
 
+def _resolve_task_image_bytes(task: WritingTaskInput) -> bytes:
+    """Return raw image bytes for OCR from `image_bytes` or a (data-URL or plain) `image_base64` string."""
+    if task.image_bytes:
+        return task.image_bytes
+    if task.image_base64:
+        payload = task.image_base64.split(",", 1)[-1] if task.image_base64.startswith("data:") else task.image_base64
+        try:
+            return base64.b64decode(payload, validate=False)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"Task {task.task_number} image is not valid base64.") from exc
+    return b""
+
+
 async def evaluate_writing_with_demo_fallback(
     request: WritingEvaluationRequest,
+    feedback_language: str = "uz",
 ) -> WritingEvaluationResult:
     """Evaluate Writing Task 1 & Task 2 via Claude -> Gemini -> offline demo fallback."""
     t1_text = request.task_1.student_text
     if (not t1_text or not t1_text.strip()) and request.task_1.has_image:
         t1_text = await transcribe_image_with_demo_fallback(
-            request.task_1.image_bytes or b"demo_image",
+            _resolve_task_image_bytes(request.task_1),
             task_number=1,
         )
 
     t2_text = request.task_2.student_text
     if (not t2_text or not t2_text.strip()) and request.task_2.has_image:
         t2_text = await transcribe_image_with_demo_fallback(
-            request.task_2.image_bytes or b"demo_image",
+            _resolve_task_image_bytes(request.task_2),
             task_number=2,
         )
 
@@ -348,6 +364,7 @@ async def evaluate_writing_with_demo_fallback(
                 request,
                 t1_text=t1_text,
                 t2_text=t2_text,
+                feedback_language=feedback_language,
             )
         except Exception as exc:
             logger.warning(
@@ -355,6 +372,7 @@ async def evaluate_writing_with_demo_fallback(
                 exc,
             )
 
+    _ensure_demo_fallback_allowed("Writing evaluation")
     return _build_demo_writing_evaluation(
         exam_type=request.exam_type,
         t1_text=t1_text,
@@ -436,6 +454,7 @@ def _build_demo_speaking_evaluation(
 
 async def evaluate_speaking_with_demo_fallback(
     request: SpeakingEvaluationRequest,
+    feedback_language: str = "uz",
 ) -> SpeakingEvaluationResult:
     """Evaluate Speaking Parts 1, 2, 3 via Claude -> Gemini -> offline demo fallback."""
     texts: dict[int, str] = {}
@@ -506,6 +525,7 @@ async def evaluate_speaking_with_demo_fallback(
                 p1_text=texts[1],
                 p2_text=texts[2],
                 p3_text=texts[3],
+                feedback_language=feedback_language,
             )
         except Exception as exc:
             logger.warning(
@@ -513,6 +533,7 @@ async def evaluate_speaking_with_demo_fallback(
                 exc,
             )
 
+    _ensure_demo_fallback_allowed("Speaking evaluation")
     return _build_demo_speaking_evaluation(
         exam_type=request.exam_type,
         p1_text=texts[1],
@@ -522,12 +543,12 @@ async def evaluate_speaking_with_demo_fallback(
 
 
 # =====================================================================
-# 2. STEP-BY-STEP TELEGRAM BOT FSM HANDLERS
+# 2. TELEGRAM PRACTICE FLOW (Writing & Speaking in chat; full mock in the Mini App)
 # =====================================================================
 
 
 def _get_active_test(exam_type: str, test_id: str | None = None) -> dict[str, Any]:
-    """Return the active mock exam dictionary (by `test_id` if stored in FSM state, else random out of 10)."""
+    """Return the mock exam stored in FSM state, else a random variant."""
     if test_id:
         found = get_demo_test_by_id(test_id)
         if found is not None:
@@ -535,33 +556,43 @@ def _get_active_test(exam_type: str, test_id: str | None = None) -> dict[str, An
     return get_random_demo_test(exam_type)
 
 
+def _feedback_language(user: Any) -> str:
+    code = (getattr(user, "language_code", None) or "").lower()
+    return "ru" if code.startswith("ru") else ("en" if code.startswith("en") else "uz")
+
+
+def _subjects(user_id: int) -> list[str]:
+    return [f"tg:{user_id}"]
+
+
+async def _quota_left(user_id: int) -> int:
+    decision = await usage_limits.remaining(usage_limits.EXAM, _subjects(user_id))
+    return decision.remaining
+
+
+LIMIT_REACHED_TEXT = (
+    "⏳ <b>Daily limit reached.</b> You can take {limit} AI-scored exams per day — come back tomorrow!\n"
+    "Kunlik limit tugadi: kuniga {limit} ta AI baholaydigan imtihon. Ertaga qayta urinib ko'ring.\n\n"
+    "🎧📖 Listening &amp; Reading practice in the Mini App is unlimited."
+)
+
+
 @router.callback_query(F.data.startswith("exam_type:"))
 async def cb_select_exam_type(callback: CallbackQuery, state: FSMContext) -> None:
-    """Step 1: Candidate selects `exam_type:IELTS` or `exam_type:CEFR` (picks 1 of 10 random variants)."""
+    """Step 1: IELTS or CEFR (a random variant is picked)."""
     await callback.answer()
     raw_type = (callback.data or "exam_type:IELTS").split(":", 1)[1].strip().upper()
     exam_type: ExamType = "CEFR" if raw_type == "CEFR" else "IELTS"
     test = get_random_demo_test(exam_type)
-
-    await state.update_data(
-        exam_type=exam_type,
-        test_id=test["id"],
-        listening_raw=0,
-        reading_raw=0,
-    )
+    await state.update_data(exam_type=exam_type, test_id=test["id"])
     await state.set_state(ExamSessionStates.choosing_exam_mode)
-
-    badge = (
-        "🇬🇧 IELTS Academic (0.0 - 9.0 Band)"
-        if exam_type == "IELTS"
-        else "🇺🇿 O'zbekiston BBA Multi-Level CEFR (0 - 75 shkala)"
-    )
     if callback.message:
         await callback.message.answer(
             text=(
-                f"✅ Tanlangan format: <b>{badge}</b>\n"
-                f"🎲 Tasodifiy variant (10 tadan): <b>{test['title']}</b> (<code>{test['id']}</code>)\n\n"
-                "👇 Imtihon topshirish rejimini tanlang:"
+                f"✅ <b>{'IELTS Academic' if exam_type == 'IELTS' else 'Multilevel CEFR'}</b> — {test['title']}\n\n"
+                "Choose what you want to practise:\n"
+                "• <b>Full mock</b> — all 4 skills in the Mini App, with a PDF report\n"
+                "• <b>Writing</b> or <b>Speaking</b> — right here in the chat"
             ),
             reply_markup=build_exam_mode_keyboard(exam_type=exam_type),
             parse_mode="HTML",
@@ -570,593 +601,302 @@ async def cb_select_exam_type(callback: CallbackQuery, state: FSMContext) -> Non
 
 @router.callback_query(F.data.startswith("mode:"))
 async def cb_select_exam_mode(callback: CallbackQuery, state: FSMContext) -> None:
-    """Step 2: Candidate selects `mode:full`, `mode:writing`, or `mode:speaking`."""
+    """Step 2: writing or speaking practice in chat (the full mock lives in the Mini App)."""
     await callback.answer()
-    mode = (callback.data or "mode:full").split(":", 1)[1].strip().lower()
+    mode = (callback.data or "mode:writing").split(":", 1)[1].strip().lower()
     data = await state.get_data()
     exam_type: ExamType = data.get("exam_type", "IELTS")
     test = _get_active_test(exam_type, data.get("test_id"))
+    message = callback.message
+    if message is None or callback.from_user is None:
+        return
+
+    left = await _quota_left(callback.from_user.id)
+    if left <= 0:
+        await message.answer(LIMIT_REACHED_TEXT.format(limit=settings.DAILY_EXAM_LIMIT), parse_mode="HTML")
+        return
 
     await state.update_data(exam_mode=mode, test_id=test["id"])
-
-    if mode == "writing":
-        await state.set_state(ExamSessionStates.submitting_writing_task_1)
-        t1_prompt = test["writing_data"]["task_1_prompt"]
-        if callback.message:
-            await callback.message.answer(
-                text=(
-                    f"✍️ <b>{exam_type} Writing — Task 1</b> (Kamida 150 ta so'z)\n\n"
-                    f"<b>Mavzu (Prompt):</b>\n<i>{t1_prompt}</i>\n\n"
-                    "📝 Insho matnini shu yerga yozib yuboring <b>yoki</b> daftarga qo'lda yozilgan "
-                    "insho <b>rasmini (Photo)</b> yuboring (AI Vision OCR avtomatik o'qiydi):"
-                ),
-                parse_mode="HTML",
-            )
-        return
-
     if mode == "speaking":
-        await state.set_state(ExamSessionStates.submitting_speaking_part_1)
-        p1_questions = "\n".join(
-            f"• {q}" for q in test["speaking_data"]["part_1_questions"]
-        )
-        if callback.message:
-            await callback.message.answer(
-                text=(
-                    f"🎙 <b>{exam_type} Speaking — Part 1 (Introduction &amp; Interview)</b>\n\n"
-                    f"<b>Savollar:</b>\n<i>{p1_questions}</i>\n\n"
-                    "🎤 Ushbu savollarga <b>ovozli xabar (Voice .ogg)</b> yuboring "
-                    "(yoki test rejimida matn yozib yuboring):"
-                ),
-                parse_mode="HTML",
-            )
+        await _start_speaking(message, state, test)
         return
-
-    # Default: mode == "full" -> Start with Listening & Reading
-    await state.set_state(ExamSessionStates.taking_listening_reading)
-    if callback.message:
-        await callback.message.answer(
-            text=(
-                f"🎧📖 <b>1-Bosqich: {exam_type} Listening &amp; Reading (40 + 40 savol)</b>\n\n"
-                "Ushbu bosqichni 2 xil usulda topshirishingiz mumkin:\n"
-                "1️⃣ Quyidagi <b>Mini App</b> tugmasini bosib interaktiv testni yeching.\n"
-                "2️⃣ Yoki tezkor sinov uchun quyidagi namuna ballardan birini tanlang / "
-                "Listening va Reading to'g'ri javoblar sonini yozib yuboring (masalan: <code>32 30</code>):"
-            ),
-            reply_markup=build_listening_reading_keyboard(exam_type=exam_type),
-            parse_mode="HTML",
-        )
+    await _start_writing(message, state, test)
 
 
-async def _transition_to_writing_task_1(
-    message: Message,
-    state: FSMContext,
-    exam_type: ExamType,
-    l_raw: int,
-    r_raw: int,
-) -> None:
-    """Save Listening/Reading scores and prompt the candidate for Writing Task 1."""
-    l_band = convert_listening_raw_to_band(l_raw)
-    r_band = convert_reading_raw_to_band(r_raw, module="academic")
-    l_75 = (
-        convert_raw_to_cefr_standard_score(l_raw, 40)
-        if exam_type == "CEFR"
-        else band_to_cefr_75_score(l_band)
-    )
-    r_75 = (
-        convert_raw_to_cefr_standard_score(r_raw, 40)
-        if exam_type == "CEFR"
-        else band_to_cefr_75_score(r_band)
-    )
+# ----------------------------- Writing --------------------------------
 
-    data = await state.get_data()
-    test = _get_active_test(exam_type, data.get("test_id"))
-    await state.update_data(
-        test_id=test["id"],
-        listening_raw=l_raw,
-        listening_band=l_band,
-        listening_score_75=l_75,
-        reading_raw=r_raw,
-        reading_band=r_band,
-        reading_score_75=r_75,
-    )
+
+async def _start_writing(message: Message, state: FSMContext, test: dict[str, Any]) -> None:
     await state.set_state(ExamSessionStates.submitting_writing_task_1)
-
-    t1_prompt = test["writing_data"]["task_1_prompt"]
-
-    await message.answer(
-        text=(
-            "✅ <b>Listening &amp; Reading natijalari qabul qilindi ($0.00 token):</b>\n"
-            f"• 🎧 <b>Listening:</b> {l_raw}/40 — Band <b>{l_band:.1f}</b> ({l_75:.1f}/75)\n"
-            f"• 📖 <b>Reading:</b> {r_raw}/40 — Band <b>{r_band:.1f}</b> ({r_75:.1f}/75)\n\n"
-            f"✍️ <b>2-Bosqich: {exam_type} Writing — Task 1</b> (Kamida 150 so'z)\n\n"
-            f"<b>Mavzu (Prompt):</b>\n<i>{t1_prompt}</i>\n\n"
-            "📝 Task 1 insho matnini yuboring yoki qo'lyozma daftar <b>rasmini (Photo)</b> jo'nating:"
-        ),
-        parse_mode="HTML",
+    writing = test["writing_data"]
+    header = (
+        "✍️ <b>WRITING TASK 1</b> — spend about 20 minutes. Write at least 150 words.\n\n"
+        f"<i>{writing['task_1_prompt']}</i>\n\n"
+        "Send your answer as text, or a clear photo of your handwritten answer.\n"
+        "<i>Javobni matn yoki qo'lyozma rasmi sifatida yuboring.</i>"
     )
-
-
-@router.callback_query(
-    ExamSessionStates.taking_listening_reading,
-    F.data.startswith("lr_quick:"),
-)
-async def cb_quick_listening_reading(callback: CallbackQuery, state: FSMContext) -> None:
-    """Handle quick preset Listening & Reading scores (`lr_quick:32:30`)."""
-    await callback.answer()
-    parts = (callback.data or "lr_quick:32:30").split(":")
-    l_raw = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 32
-    r_raw = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 30
-
-    data = await state.get_data()
-    exam_type: ExamType = data.get("exam_type", "IELTS")
-
-    if callback.message:
-        await _transition_to_writing_task_1(
-            message=callback.message,
-            state=state,
-            exam_type=exam_type,
-            l_raw=l_raw,
-            r_raw=r_raw,
+    chart_png = render_task1_chart(test["id"])
+    if chart_png:
+        await message.answer_photo(
+            photo=BufferedInputFile(chart_png, filename="task1.png"),
+            caption="Writing Task 1 — visual",
         )
-
-
-@router.message(F.web_app_data)
-async def handle_webapp_data(message: Message, state: FSMContext) -> None:
-    """Process Listening, Reading, and optional Writing data submitted from the Telegram Mini App."""
-    raw_json = message.web_app_data.data if message.web_app_data else "{}"
-    try:
-        payload = json.loads(raw_json)
-        if not isinstance(payload, dict):
-            payload = {}
-    except json.JSONDecodeError:
-        payload = {}
-
-    data = await state.get_data()
-    raw_exam_type = str(payload.get("exam_type") or data.get("exam_type") or "IELTS").upper()
-    exam_type: ExamType = "CEFR" if raw_exam_type == "CEFR" else "IELTS"
-    test = _get_active_test(exam_type, payload.get("test_id") or data.get("test_id"))
-
-    # Grade answer dicts if provided, or read direct raw counts
-    if "listening_answers" in payload and isinstance(payload["listening_answers"], dict):
-        l_scored = score_reading_or_listening(
-            user_answers=payload["listening_answers"],
-            answer_key=test["listening_data"]["answer_key"],
-            section="listening",
-            exam_type=exam_type,
-        )
-        l_raw = l_scored.correct_count
-    else:
-        l_raw = int(payload.get("listening_raw", 30))
-
-    if "reading_answers" in payload and isinstance(payload["reading_answers"], dict):
-        r_scored = score_reading_or_listening(
-            user_answers=payload["reading_answers"],
-            answer_key=test["reading_data"]["answer_key"],
-            section="reading",
-            exam_type=exam_type,
-        )
-        r_raw = r_scored.correct_count
-    else:
-        r_raw = int(payload.get("reading_raw", 29))
-
-    l_raw = max(0, min(40, l_raw))
-    r_raw = max(0, min(40, r_raw))
-
-    await state.update_data(
-        exam_type=exam_type,
-        test_id=test["id"],
-        exam_mode=data.get("exam_mode", "full"),
-    )
-    await _transition_to_writing_task_1(
-        message=message,
-        state=state,
-        exam_type=exam_type,
-        l_raw=l_raw,
-        r_raw=r_raw,
-    )
-
-
-@router.message(ExamSessionStates.taking_listening_reading, F.text)
-async def handle_listening_reading_text(message: Message, state: FSMContext) -> None:
-    """Allow candidate to enter Listening and Reading raw scores as text (e.g., `32 30`)."""
-    text = (message.text or "").strip()
-    numbers = [int(n) for n in re.findall(r"\b\d{1,2}\b", text)]
-    if len(numbers) < 2:
-        await message.answer(
-            text=(
-                "⚠️ Iltimos, Listening va Reading to'g'ri javoblar sonini (0 dan 40 gacha) "
-                "ikkita son ko'rinishida yuboring (masalan: <code>32 30</code>) yoki yuqoridagi "
-                "Mini App / namuna tugmasidan foydalaning."
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    l_raw = max(0, min(40, numbers[0]))
-    r_raw = max(0, min(40, numbers[1]))
-    data = await state.get_data()
-    exam_type: ExamType = data.get("exam_type", "IELTS")
-
-    await _transition_to_writing_task_1(
-        message=message,
-        state=state,
-        exam_type=exam_type,
-        l_raw=l_raw,
-        r_raw=r_raw,
-    )
-
-
-# =====================================================================
-# 3. WRITING TASK 1 & TASK 2 HANDLERS (TEXT OR HANDWRITTEN PHOTO OCR)
-# =====================================================================
+    await message.answer(header, parse_mode="HTML")
 
 
 async def _download_telegram_photo_bytes(message: Message, bot: Bot) -> bytes:
-    """Download the highest-resolution photo from a Telegram message into memory bytes."""
+    """Download the highest-resolution photo attached to a message."""
     if not message.photo:
-        raise ValueError("No photo attached to message.")
-    largest_photo = message.photo[-1]
+        return b""
+    file = await bot.get_file(message.photo[-1].file_id)
     buffer = io.BytesIO()
-    await bot.download(largest_photo, destination=buffer)
+    await bot.download_file(file.file_path, destination=buffer)  # type: ignore[arg-type]
     return buffer.getvalue()
 
 
-@router.message(ExamSessionStates.submitting_writing_task_1, F.photo)
-async def handle_writing_task_1_photo(
-    message: Message,
-    state: FSMContext,
-    bot: Bot,
-) -> None:
-    """Transcribe handwritten Task 1 essay photo via Vision OCR and move to Task 2."""
-    status_msg = await message.answer(
-        "🔍 <i>Qo'lyozma rasm Vision OCR orqali o'qilmoqda, iltimos kuting...</i>",
-        parse_mode="HTML",
-    )
-    image_bytes = await _download_telegram_photo_bytes(message, bot)
-    transcribed_text = await transcribe_image_with_demo_fallback(image_bytes, task_number=1)
-    word_count = len(transcribed_text.split())
+async def _writing_answer_text(message: Message, bot: Bot, task_number: Literal[1, 2]) -> str:
+    if message.photo:
+        await message.answer("🔍 Reading your handwriting… / Qo'lyozma o'qilmoqda…")
+        image = await _download_telegram_photo_bytes(message, bot)
+        return await transcribe_image_with_demo_fallback(image, task_number=task_number)
+    return (message.text or "").strip()
 
+
+@router.message(ExamSessionStates.submitting_writing_task_1, F.photo | F.text)
+async def handle_writing_task_1(message: Message, state: FSMContext, bot: Bot) -> None:
+    text = await _writing_answer_text(message, bot, 1)
     data = await state.get_data()
-    exam_type: ExamType = data.get("exam_type", "IELTS")
-    test = _get_active_test(exam_type, data.get("test_id"))
-    t2_prompt = test["writing_data"]["task_2_prompt"]
-
-    await state.update_data(task_1_text=transcribed_text, test_id=test["id"])
+    test = _get_active_test(data.get("exam_type", "IELTS"), data.get("test_id"))
+    await state.update_data(task_1_text=text)
     await state.set_state(ExamSessionStates.submitting_writing_task_2)
-
-    await status_msg.edit_text(
-        text=(
-            f"✅ <b>Task 1 Vision OCR orqali o'qildi ({word_count} ta so'z):</b>\n"
-            f"<blockquote>{transcribed_text[:350]}{'...' if len(transcribed_text) > 350 else ''}</blockquote>\n\n"
-            f"✍️ <b>Endi {exam_type} Writing — Task 2</b> (Kamida 250 ta so'z)\n\n"
-            f"<b>Mavzu (Prompt):</b>\n<i>{t2_prompt}</i>\n\n"
-            "📝 Task 2 insho matnini yozib yuboring yoki daftar <b>rasmini (Photo)</b> jo'nating:"
-        ),
-        parse_mode="HTML",
-    )
-
-
-@router.message(ExamSessionStates.submitting_writing_task_1, F.text)
-async def handle_writing_task_1_text(message: Message, state: FSMContext) -> None:
-    """Save typed Writing Task 1 text and prompt for Task 2."""
-    t1_text = (message.text or "").strip()
-    word_count = len(t1_text.split())
-
-    data = await state.get_data()
-    exam_type: ExamType = data.get("exam_type", "IELTS")
-    test = _get_active_test(exam_type, data.get("test_id"))
-    t2_prompt = test["writing_data"]["task_2_prompt"]
-
-    await state.update_data(task_1_text=t1_text, test_id=test["id"])
-    await state.set_state(ExamSessionStates.submitting_writing_task_2)
-
     await message.answer(
-        text=(
-            f"✅ <b>Task 1 qabul qilindi ({word_count} ta so'z).</b>\n\n"
-            f"✍️ <b>Endi {exam_type} Writing — Task 2</b> (Kamida 250 ta so'z)\n\n"
-            f"<b>Mavzu (Prompt):</b>\n<i>{t2_prompt}</i>\n\n"
-            "📝 Task 2 insho matnini yozib yuboring yoki daftar <b>rasmini (Photo)</b> jo'nating:"
-        ),
+        f"✅ Task 1 received ({len(text.split())} words).\n\n"
+        "✍️ <b>WRITING TASK 2</b> — spend about 40 minutes. Write at least 250 words.\n\n"
+        f"<i>{test['writing_data']['task_2_prompt']}</i>",
         parse_mode="HTML",
     )
 
 
-async def _process_writing_task_2_and_advance(
-    message: Message,
-    state: FSMContext,
-    t2_text: str,
-) -> None:
-    """Evaluate Task 1 + Task 2 via AI Rubric and either finish (writing-only mode) or advance to Speaking."""
+@router.message(ExamSessionStates.submitting_writing_task_2, F.photo | F.text)
+async def handle_writing_task_2(message: Message, state: FSMContext, bot: Bot) -> None:
+    if message.from_user is None:
+        return
+    t2_text = await _writing_answer_text(message, bot, 2)
     data = await state.get_data()
     exam_type: ExamType = data.get("exam_type", "IELTS")
-    exam_mode: str = data.get("exam_mode", "full")
-    t1_text: str = data.get("task_1_text", "")
     test = _get_active_test(exam_type, data.get("test_id"))
 
-    wait_msg = await message.answer(
-        "🧠 <i>Writing Task 1 va Task 2 rasmiy mezonlar asosida AI tomonidan tahlil qilinmoqda...</i>",
-        parse_mode="HTML",
-    )
-
-    eval_request = WritingEvaluationRequest(
-        exam_type=exam_type,
-        task_1=WritingTaskInput(
-            task_number=1,
-            prompt_topic=test["writing_data"]["task_1_prompt"],
-            student_text=t1_text,
-        ),
-        task_2=WritingTaskInput(
-            task_number=2,
-            prompt_topic=test["writing_data"]["task_2_prompt"],
-            student_text=t2_text,
-        ),
-    )
-    writing_result = await evaluate_writing_with_demo_fallback(eval_request)
-
-    await state.update_data(
-        task_2_text=t2_text,
-        writing_result_json=writing_result.model_dump(mode="json"),
-    )
-
-    crit = writing_result.criteria_scores
-    summary_html = (
-        f"📊 <b>{exam_type} Writing Tahlil Natijasi:</b>\n"
-        f"• <b>Overall Writing Score:</b> {writing_result.overall_writing_score:.1f} "
-        f"(CEFR: <b>{writing_result.cefr_level}</b>)\n"
-        f"• <b>Task 1 (1/3):</b> {writing_result.task_1_score:.1f} | "
-        f"<b>Task 2 (2/3):</b> {writing_result.task_2_score:.1f}\n"
-        f"• <b>TA/TR:</b> {crit.task_achievement:.1f} | <b>CC:</b> {crit.coherence_cohesion:.1f} | "
-        f"<b>LR:</b> {crit.lexical_resource:.1f} | <b>GRA:</b> {crit.grammatical_range_accuracy:.1f}\n"
-    )
-
-    if exam_mode == "writing":
-        await wait_msg.edit_text(summary_html, parse_mode="HTML")
-        await _generate_and_send_final_pdf(
-            message=message,
-            state=state,
-            writing_evaluation=writing_result,
-            speaking_evaluation=None,
-        )
+    decision = await usage_limits.consume(usage_limits.EXAM, _subjects(message.from_user.id))
+    if not decision.allowed:
+        await message.answer(LIMIT_REACHED_TEXT.format(limit=settings.DAILY_EXAM_LIMIT), parse_mode="HTML")
         return
 
-    # Full mode -> advance to Speaking Part 1
-    await state.set_state(ExamSessionStates.submitting_speaking_part_1)
-    p1_questions = "\n".join(f"• {q}" for q in test["speaking_data"]["part_1_questions"])
-    await wait_msg.edit_text(
-        text=(
-            f"{summary_html}\n"
-            f"🎙 <b>3-Bosqich: {exam_type} Speaking — Part 1 (Interview)</b>\n\n"
-            f"<b>Savollar:</b>\n<i>{p1_questions}</i>\n\n"
-            "🎤 Javobingizni <b>ovozli xabar (Voice .ogg)</b> yoki matn ko'rinishida yuboring:"
-        ),
-        parse_mode="HTML",
-    )
-
-
-@router.message(ExamSessionStates.submitting_writing_task_2, F.photo)
-async def handle_writing_task_2_photo(
-    message: Message,
-    state: FSMContext,
-    bot: Bot,
-) -> None:
-    """Transcribe handwritten Task 2 essay photo via Vision OCR and run Writing evaluation."""
-    image_bytes = await _download_telegram_photo_bytes(message, bot)
-    transcribed_text = await transcribe_image_with_demo_fallback(image_bytes, task_number=2)
-    await _process_writing_task_2_and_advance(message=message, state=state, t2_text=transcribed_text)
-
-
-@router.message(ExamSessionStates.submitting_writing_task_2, F.text)
-async def handle_writing_task_2_text(message: Message, state: FSMContext) -> None:
-    """Handle typed Writing Task 2 essay submission and run Writing evaluation."""
-    t2_text = (message.text or "").strip()
-    await _process_writing_task_2_and_advance(message=message, state=state, t2_text=t2_text)
-
-
-# =====================================================================
-# 4. SPEAKING PART 1, 2, 3 HANDLERS (VOICE .OGG WHISPER STT OR TEXT)
-# =====================================================================
-
-
-async def _extract_speaking_response(
-    message: Message,
-    bot: Bot,
-    part_number: SpeakingPartNumber,
-) -> tuple[str, float]:
-    """Extract spoken transcript and duration from either a Telegram Voice message or text."""
-    if message.voice:
-        buffer = io.BytesIO()
-        await bot.download(message.voice, destination=buffer)
-        audio_bytes = buffer.getvalue()
-        duration = float(message.voice.duration or 15.0)
-        stt_result = await transcribe_voice_with_demo_fallback(
-            audio_bytes=audio_bytes,
-            duration_seconds=duration,
-            part_number=part_number,
-            filename=f"part_{part_number}.ogg",
-        )
-        return stt_result.transcribed_text, stt_result.duration_seconds
-
-    text = (message.text or "").strip()
-    word_count = len(text.split())
-    estimated_duration = round(max(10.0, (word_count / 130.0) * 60.0), 1)
-    return text, estimated_duration
-
-
-@router.message(ExamSessionStates.submitting_speaking_part_1, F.voice | F.text)
-async def handle_speaking_part_1(
-    message: Message,
-    state: FSMContext,
-    bot: Bot,
-) -> None:
-    """Process Speaking Part 1 (voice or text) and advance to Part 2 Cue Card."""
-    transcript, duration = await _extract_speaking_response(message, bot, part_number=1)
-    data = await state.get_data()
-    exam_type: ExamType = data.get("exam_type", "IELTS")
-    test = _get_active_test(exam_type, data.get("test_id"))
-    cue_card = test["speaking_data"]["part_2_cue_card"]
-
-    await state.update_data(part_1_text=transcript, part_1_duration=duration, test_id=test["id"])
-    await state.set_state(ExamSessionStates.submitting_speaking_part_2)
-
-    await message.answer(
-        text=(
-            f"✅ <b>Speaking Part 1 qabul qilindi ({len(transcript.split())} so'z).</b>\n\n"
-            f"🎙 <b>{exam_type} Speaking — Part 2 (Cue Card / Individual Long Turn)</b>\n\n"
-            f"<b>Mavzu (1–2 daqiqalik monolog):</b>\n<i>{cue_card}</i>\n\n"
-            "🎤 Monolog javobingizni <b>ovozli xabar (Voice .ogg)</b> yoki matn ko'rinishida yuboring:"
-        ),
-        parse_mode="HTML",
-    )
-
-
-@router.message(ExamSessionStates.submitting_speaking_part_2, F.voice | F.text)
-async def handle_speaking_part_2(
-    message: Message,
-    state: FSMContext,
-    bot: Bot,
-) -> None:
-    """Process Speaking Part 2 Cue Card response and advance to Part 3 Abstract Discussion."""
-    transcript, duration = await _extract_speaking_response(message, bot, part_number=2)
-    data = await state.get_data()
-    exam_type: ExamType = data.get("exam_type", "IELTS")
-    test = _get_active_test(exam_type, data.get("test_id"))
-    p3_questions = "\n".join(f"• {q}" for q in test["speaking_data"]["part_3_questions"])
-
-    await state.update_data(part_2_text=transcript, part_2_duration=duration, test_id=test["id"])
-    await state.set_state(ExamSessionStates.submitting_speaking_part_3)
-
-    await message.answer(
-        text=(
-            f"✅ <b>Speaking Part 2 qabul qilindi ({len(transcript.split())} so'z).</b>\n\n"
-            f"🎙 <b>{exam_type} Speaking — Part 3 (Two-Way Abstract Discussion)</b>\n\n"
-            f"<b>Muhokama savollari:</b>\n<i>{p3_questions}</i>\n\n"
-            "🎤 Yakuniy Part 3 javobingizni <b>ovozli xabar (Voice .ogg)</b> yoki matn ko'rinishida yuboring:"
-        ),
-        parse_mode="HTML",
-    )
-
-
-@router.message(ExamSessionStates.submitting_speaking_part_3, F.voice | F.text)
-async def handle_speaking_part_3(
-    message: Message,
-    state: FSMContext,
-    bot: Bot,
-) -> None:
-    """Process Speaking Part 3, evaluate all 3 parts, and deliver the 2-3 page PDF Certificate."""
-    p3_text, p3_duration = await _extract_speaking_response(message, bot, part_number=3)
-    data = await state.get_data()
-    exam_type: ExamType = data.get("exam_type", "IELTS")
-    test = _get_active_test(exam_type, data.get("test_id"))
-
-    wait_msg = await message.answer(
-        "⏳ <i>Speaking javoblaringiz tahlil qilinmoqda va ko'p sahifali PDF Sertifikat tayyorlanmoqda...</i>",
-        parse_mode="HTML",
-    )
-
-    p1_text = data.get("part_1_text", "")
-    p2_text = data.get("part_2_text", "")
-
-    speaking_req = SpeakingEvaluationRequest(
+    wait = await message.answer("⏳ The AI examiner is marking your essays… / Baholanmoqda…")
+    task_1_prompt = test["writing_data"]["task_1_prompt"]
+    if test["writing_data"].get("task_1_chart_text"):
+        task_1_prompt += "\n\nDATA SHOWN IN THE VISUAL:\n" + test["writing_data"]["task_1_chart_text"]
+    request = WritingEvaluationRequest(
         exam_type=exam_type,
-        part_1=SpeakingPartInput(
-            part_number=1,
-            question_prompt="; ".join(test["speaking_data"]["part_1_questions"]),
-            transcript_text=p1_text,
-            duration_seconds=float(data.get("part_1_duration", 15.0)),
-        ),
-        part_2=SpeakingPartInput(
-            part_number=2,
-            question_prompt=test["speaking_data"]["part_2_cue_card"],
-            transcript_text=p2_text,
-            duration_seconds=float(data.get("part_2_duration", 45.0)),
-        ),
-        part_3=SpeakingPartInput(
-            part_number=3,
-            question_prompt="; ".join(test["speaking_data"]["part_3_questions"]),
-            transcript_text=p3_text,
-            duration_seconds=p3_duration,
-        ),
+        task_1=WritingTaskInput(task_number=1, prompt_topic=task_1_prompt, student_text=data.get("task_1_text", "")),
+        task_2=WritingTaskInput(task_number=2, prompt_topic=test["writing_data"]["task_2_prompt"], student_text=t2_text),
     )
+    try:
+        result = await evaluate_writing_with_demo_fallback(request, feedback_language=_feedback_language(message.from_user))
+    except AIServiceUnavailableError:
+        await usage_limits.refund(usage_limits.EXAM, _subjects(message.from_user.id))
+        raise
+    finally:
+        await wait.delete()
 
-    speaking_result = await evaluate_speaking_with_demo_fallback(speaking_req)
-
-    writing_result: WritingEvaluationResult | None = None
-    if data.get("writing_result_json"):
-        writing_result = WritingEvaluationResult.model_validate(data["writing_result_json"])
-
-    await wait_msg.delete()
-    await _generate_and_send_final_pdf(
-        message=message,
-        state=state,
-        writing_evaluation=writing_result,
-        speaking_evaluation=speaking_result,
-    )
-
-
-async def _generate_and_send_final_pdf(
-    message: Message,
-    state: FSMContext,
-    writing_evaluation: WritingEvaluationResult | None,
-    speaking_evaluation: SpeakingEvaluationResult | None,
-) -> None:
-    """Compile the 4-skill report via `ExamOrchestratorService` and send the PDF via `BufferedInputFile`."""
-    data = await state.get_data()
-    exam_type: ExamType = data.get("exam_type", "IELTS")
-    l_raw = int(data.get("listening_raw", 0))
-    r_raw = int(data.get("reading_raw", 0))
-
-    user = message.from_user
-    candidate_name = user.full_name if user and user.full_name else "Candidate"
-    telegram_id = user.id if user else None
-
-    short_uuid = uuid.uuid4().hex[:6].upper()
-    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
-    report_id = f"{exam_type}-{date_str}-{short_uuid}"
-
-    orchestrator = get_exam_orchestrator_service()
-    compiled = await orchestrator.compile_full_exam_report(
-        report_id=report_id,
-        candidate_name=candidate_name,
-        candidate_telegram_id=telegram_id,
-        exam_type=exam_type,
-        listening_raw=l_raw,
-        reading_raw=r_raw,
-        writing_evaluation=writing_evaluation,
-        speaking_evaluation=speaking_evaluation,
-    )
-
-    scores = compiled.scores
-    caption = (
-        f"🎓 <b>{exam_type} MOCK AI — YAKUNIY NATIJA VA DIAGNOSTIK HISOBOT</b>\n"
-        f"🆔 Hisobot raqami: <code>{report_id}</code>\n"
-        f"👤 Nomzod: <b>{candidate_name}</b>\n\n"
-        f"🏆 <b>OVERALL IELTS BAND: {scores.overall_band:.1f} / 9.0</b>\n"
-        f"🇺🇿 <b>BBA MULTI-LEVEL BALL: {scores.overall_score_75:.1f} / 75.0</b>\n"
-        f"📈 <b>CEFR DARAJASI: {scores.cefr_level}</b>\n\n"
-        "<b>Ko'nikmalar kesimida (4-Skill Breakdown):</b>\n"
-        f"• 🎧 Listening: <b>{scores.listening_band:.1f}</b> ({scores.listening_raw}/40 | {scores.listening_score_75:.1f}/75)\n"
-        f"• 📖 Reading: <b>{scores.reading_band:.1f}</b> ({scores.reading_raw}/40 | {scores.reading_score_75:.1f}/75)\n"
-        f"• ✍️ Writing: <b>{scores.writing_band:.1f}</b> ({scores.writing_score_75:.1f}/75)\n"
-        f"• 🎙 Speaking: <b>{scores.speaking_band:.1f}</b> ({scores.speaking_score_75:.1f}/75)\n\n"
-        "📎 <i>Biriktirilgan PDF faylda 1-sahifada Sertifikat va 2-sahifada Xatolar Daftari "
-        "(Detailed Error Workbook) + C1 Band Booster lug'ati keltirilgan!</i>\n\n"
-        "⚖️ <i>Mustaqil AI baholash va tayyorgarlik vositasi (Unofficial Mock Assessment Tool).</i>"
-    )
-
-    pdf_file = BufferedInputFile(
-        file=compiled.pdf_bytes,
-        filename=f"{report_id}.pdf",
-    )
-    await message.answer_document(
-        document=pdf_file,
-        caption=caption,
-        reply_markup=build_main_menu_keyboard(),
-        parse_mode="HTML",
-    )
+    await message.answer(_format_writing_result(result, exam_type), parse_mode="HTML", reply_markup=build_main_menu_keyboard())
     await state.clear()
 
 
+def _band_or_75(value: float, exam_type: str) -> str:
+    return f"{value:.1f}" if exam_type == "IELTS" else f"{band_to_cefr_75_score(value):.1f}/75"
+
+
+def _format_errors_and_vocab(errors: list[Any], vocab: list[Any]) -> str:
+    lines: list[str] = []
+    if errors:
+        lines.append("\n🔍 <b>Key mistakes</b>")
+        for err in errors[:6]:
+            lines.append(
+                f"• <s>{html.escape(err.original)}</s> → <b>{html.escape(err.correction)}</b>\n"
+                f"  <i>{html.escape(err.explanation_uz)}</i>"
+            )
+    if vocab:
+        lines.append("\n🚀 <b>Vocabulary upgrades</b>")
+        for v in vocab[:5]:
+            lines.append(f"• {html.escape(v.simple_used)} → <b>{html.escape(v.advanced_alternative)}</b>")
+    return "\n".join(lines)
+
+
+def _format_writing_result(result: WritingEvaluationResult, exam_type: str) -> str:
+    c = result.criteria_scores
+    return (
+        f"📊 <b>Writing result ({exam_type})</b>\n\n"
+        f"Overall: <b>{_band_or_75(result.overall_writing_score, exam_type)}</b>  (CEFR {result.cefr_level})\n"
+        f"Task 1: {result.task_1_score:.1f} • Task 2: {result.task_2_score:.1f}\n"
+        f"Task Achievement/Response {c.task_achievement:.1f} • Coherence &amp; Cohesion {c.coherence_cohesion:.1f}\n"
+        f"Lexical Resource {c.lexical_resource:.1f} • Grammar {c.grammatical_range_accuracy:.1f}"
+        + _format_errors_and_vocab(result.detailed_errors, result.band_booster_vocabulary)
+        + "\n\n<i>Unofficial AI mock assessment — not an official IELTS/CEFR result.</i>"
+    )
+
+
+# ----------------------------- Speaking -------------------------------
+
+
+def _speaking_queue(test: dict[str, Any]) -> list[dict[str, Any]]:
+    sd = test["speaking_data"]
+    queue: list[dict[str, Any]] = []
+    for topic in sd.get("part_1_topics") or [{"topic": "", "questions": sd["part_1_questions"]}]:
+        for q in topic["questions"]:
+            queue.append({"part": 1, "text": q})
+    queue.append({"part": 2, "text": sd["part_2_cue_card"]})
+    for q in sd["part_3_questions"]:
+        queue.append({"part": 3, "text": q})
+    return queue
+
+
+async def _ask_speaking_question(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    queue, idx = data["speaking_queue"], data["speaking_index"]
+    item = queue[idx]
+    part_intro = {1: "🎙 <b>SPEAKING PART 1</b> — Interview", 2: "🎙 <b>SPEAKING PART 2</b> — Long turn", 3: "🎙 <b>SPEAKING PART 3</b> — Discussion"}
+    first_of_part = idx == 0 or queue[idx - 1]["part"] != item["part"]
+    prefix = part_intro[item["part"]] + "\n\n" if first_of_part else ""
+    if item["part"] == 2:
+        body = (
+            f"<i>{html.escape(item['text'])}</i>\n\n"
+            "You have <b>1 minute</b> to prepare, then speak for <b>1–2 minutes</b>.\n"
+            "Send ONE voice message. / Bitta ovozli xabar yuboring."
+        )
+    else:
+        number = sum(1 for q in queue[: idx + 1] if q["part"] == item["part"])
+        body = f"<b>Q{number}.</b> {html.escape(item['text'])}\n\n🎤 Reply with a voice message."
+    await message.answer(prefix + body, parse_mode="HTML")
+
+
+async def _start_speaking(message: Message, state: FSMContext, test: dict[str, Any]) -> None:
+    await state.set_state(ExamSessionStates.answering_speaking)
+    await state.update_data(speaking_queue=_speaking_queue(test), speaking_index=0, speaking_answers=[])
+    await message.answer(
+        "The examiner will ask you questions one by one. Answer each with a <b>voice message</b> "
+        "(text is accepted too, but pronunciation and fluency can then only be estimated).\n"
+        "<i>Har bir savolga ovozli xabar bilan javob bering.</i>",
+        parse_mode="HTML",
+    )
+    await _ask_speaking_question(message, state)
+
+
+@router.message(ExamSessionStates.answering_speaking, F.voice | F.text)
+async def handle_speaking_answer(message: Message, state: FSMContext, bot: Bot) -> None:
+    if message.from_user is None:
+        return
+    data = await state.get_data()
+    queue, idx = data["speaking_queue"], data["speaking_index"]
+
+    if message.voice:
+        tr = await usage_limits.consume(usage_limits.TRANSCRIBE, _subjects(message.from_user.id))
+        if not tr.allowed:
+            await message.answer("⏳ Daily speaking limit reached. Please come back tomorrow.")
+            return
+        file = await bot.get_file(message.voice.file_id)
+        buffer = io.BytesIO()
+        await bot.download_file(file.file_path, destination=buffer)  # type: ignore[arg-type]
+        stt = await transcribe_voice_with_demo_fallback(
+            audio_bytes=buffer.getvalue(),
+            duration_seconds=float(message.voice.duration or 10),
+            part_number=queue[idx]["part"],
+            filename="voice.ogg",
+        )
+        text, duration = stt.transcribed_text.strip(), float(message.voice.duration or 10)
+    else:
+        text = (message.text or "").strip()
+        duration = round(max(5.0, len(text.split()) / 130.0 * 60.0), 1)
+
+    answers = data["speaking_answers"] + [{"part": queue[idx]["part"], "text": text, "duration": duration}]
+    idx += 1
+    await state.update_data(speaking_answers=answers, speaking_index=idx)
+    if idx < len(queue):
+        await _ask_speaking_question(message, state)
+        return
+    await _finish_speaking(message, state)
+
+
+async def _finish_speaking(message: Message, state: FSMContext) -> None:
+    assert message.from_user is not None
+    data = await state.get_data()
+    exam_type: ExamType = data.get("exam_type", "IELTS")
+    test = _get_active_test(exam_type, data.get("test_id"))
+    sd = test["speaking_data"]
+
+    decision = await usage_limits.consume(usage_limits.EXAM, _subjects(message.from_user.id))
+    if not decision.allowed:
+        await message.answer(LIMIT_REACHED_TEXT.format(limit=settings.DAILY_EXAM_LIMIT), parse_mode="HTML")
+        await state.clear()
+        return
+
+    def joined(part: int) -> tuple[str, float]:
+        items = [a for a in data["speaking_answers"] if a["part"] == part]
+        return " ".join(a["text"] for a in items), sum(a["duration"] for a in items) or 10.0
+
+    (p1, d1), (p2, d2), (p3, d3) = joined(1), joined(2), joined(3)
+    wait = await message.answer("⏳ The AI examiner is assessing your speaking… / Baholanmoqda…")
+    request = SpeakingEvaluationRequest(
+        exam_type=exam_type,
+        part_1=SpeakingPartInput(part_number=1, question_prompt="; ".join(sd["part_1_questions"]), transcript_text=p1, duration_seconds=d1),
+        part_2=SpeakingPartInput(part_number=2, question_prompt=sd["part_2_cue_card"], transcript_text=p2, duration_seconds=d2),
+        part_3=SpeakingPartInput(part_number=3, question_prompt="; ".join(sd["part_3_questions"]), transcript_text=p3, duration_seconds=d3),
+    )
+    try:
+        result = await evaluate_speaking_with_demo_fallback(request, feedback_language=_feedback_language(message.from_user))
+    except AIServiceUnavailableError:
+        await usage_limits.refund(usage_limits.EXAM, _subjects(message.from_user.id))
+        raise
+    finally:
+        await wait.delete()
+
+    c = result.criteria_scores
+    text = (
+        f"📊 <b>Speaking result ({exam_type})</b>\n\n"
+        f"Overall: <b>{_band_or_75(result.overall_speaking_score, exam_type)}</b>  (CEFR {result.cefr_level})\n"
+        f"Fluency {c.fluency_coherence:.1f} • Vocabulary {c.lexical_resource:.1f} • "
+        f"Grammar {c.grammatical_range_accuracy:.1f} • Pronunciation {c.pronunciation:.1f}\n\n"
+        f"🗣 {html.escape(result.fluency_feedback_uz)}\n🔊 {html.escape(result.pronunciation_feedback_uz)}"
+        + _format_errors_and_vocab(result.detailed_errors, result.band_booster_vocabulary)
+        + "\n\n<i>Unofficial AI mock assessment — not an official IELTS/CEFR result.</i>"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=build_main_menu_keyboard())
+    await state.clear()
+
+
+@router.message(StateFilter(ExamSessionStates.submitting_writing_task_1, ExamSessionStates.submitting_writing_task_2, ExamSessionStates.answering_speaking))
+async def handle_unexpected_input(message: Message) -> None:
+    await message.answer("Please send text, a photo (Writing) or a voice message (Speaking). /start to cancel.")
+
+
+
+@router.errors(ExceptionTypeFilter(AIServiceUnavailableError))
+async def handle_ai_unavailable_error(event: ErrorEvent) -> bool:
+    """Tell the candidate to retry instead of silently failing; FSM state is kept so they can resend."""
+    logger.warning("Exam flow submission failed: %s", event.exception)
+    message = event.update.message or (
+        event.update.callback_query.message if event.update.callback_query else None
+    )
+    if message is not None:
+        await message.answer(
+            "⚠️ The AI examiner could not process this answer right now. "
+            "Please send it again in a minute.\n"
+            "⚠️ AI baholovchi hozir javobni qayta ishlay olmadi. Iltimos, bir daqiqadan so'ng qayta yuboring."
+        )
+    return True
+
+
 __all__ = [
+    "AIServiceUnavailableError",
     "evaluate_speaking_with_demo_fallback",
     "evaluate_writing_with_demo_fallback",
     "is_placeholder_api_key",

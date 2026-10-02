@@ -252,11 +252,11 @@ def test_fastapi_objective_submission_zero_cost_grading() -> None:
 
     # Prepare 30/40 correct Listening answers (Band 7.0) and 30/40 correct Reading answers (Band 7.0)
     listening_answers = {
-        str(i): (l_key[str(i)] if i <= 30 else "wrong_answer")
+        str(i): (l_key[str(i)].split("/")[0] if i <= 30 else "wrong_answer")
         for i in range(1, 41)
     }
     reading_answers = {
-        str(i): (r_key[str(i)] if i <= 30 else "wrong_answer")
+        str(i): (r_key[str(i)].split("/")[0] if i <= 30 else "wrong_answer")
         for i in range(1, 41)
     }
 
@@ -301,8 +301,8 @@ def test_fastapi_full_report_generation_and_pdf_download() -> None:
     r_key: dict[str, str] = raw_ielts["reading_data"]["answer_key"]
 
     # 33/40 Listening (Band 7.5) and 30/40 Reading (Band 7.0)
-    listening_answers = {str(i): (l_key[str(i)] if i <= 33 else "wrong") for i in range(1, 41)}
-    reading_answers = {str(i): (r_key[str(i)] if i <= 30 else "wrong") for i in range(1, 41)}
+    listening_answers = {str(i): (l_key[str(i)].split("/")[0] if i <= 33 else "wrong") for i in range(1, 41)}
+    reading_answers = {str(i): (r_key[str(i)].split("/")[0] if i <= 30 else "wrong") for i in range(1, 41)}
 
     init_data = create_signed_webapp_init_data(
         user_data={"id": 998901234567, "first_name": "Azizbek"},
@@ -346,12 +346,24 @@ def test_fastapi_full_report_generation_and_pdf_download() -> None:
     assert scores.get("overall_score_75") >= 50.0
     assert scores.get("cefr_level") in {"B2", "C1", "C2"}
 
-    # Download the generated PDF via GET /api/v1/reports/{report_id}/pdf
-    pdf_resp = client.get(f"/api/v1/reports/{report_id}/pdf")
+    # Download the generated PDF via the signed URL returned by the API
+    download_url = report_json["download_url"]
+    pdf_resp = client.get(download_url)
     assert pdf_resp.status_code == 200
     assert "application/pdf" in pdf_resp.headers.get("content-type", "")
     assert pdf_resp.content.startswith(b"%PDF-")
     assert len(pdf_resp.content) > 3072
+
+    # Simulate a server restart (PDF lost): the signed token rebuilds it; a bare URL cannot
+    pdf_file = BASE_DIR / settings.PDF_OUTPUT_DIR / f"{report_id}.pdf"
+    pdf_file.unlink()
+    assert client.get(f"/api/v1/reports/{report_id}/pdf").status_code == 404
+    rebuilt = client.get(download_url)
+    assert rebuilt.status_code == 200 and rebuilt.content.startswith(b"%PDF-")
+    tampered = download_url[:-6] + ("AAAAAA" if not download_url.endswith("AAAAAA") else "BBBBBB")
+    pdf_file.unlink()
+    assert client.get(tampered).status_code == 403
+    assert report_json["objective_review"]["listening"][0]["question_id"] == "1"
 
 
 # =====================================================================
@@ -365,12 +377,10 @@ def test_aiogram_fsm_states_and_keyboards() -> None:
 
     required_states = [
         "choosing_exam_type",
-        "taking_listening_reading",
+        "choosing_exam_mode",
         "submitting_writing_task_1",
         "submitting_writing_task_2",
-        "submitting_speaking_part_1",
-        "submitting_speaking_part_2",
-        "submitting_speaking_part_3",
+        "answering_speaking",
     ]
     for state_name in required_states:
         attr = getattr(ExamSessionStates, state_name, None)
@@ -412,24 +422,21 @@ def test_webapp_frontend_files_existence_and_structure() -> None:
     css_content = styles_css.read_text(encoding="utf-8")
     js_content = app_js.read_text(encoding="utf-8")
 
-    # Verify Telegram WebApp SDK & TailwindCSS in index.html
+    # Telegram SDK, PWA manifest and the English exam UI
     assert "https://telegram.org/js/telegram-web-app.js" in html_content
+    assert "manifest.webmanifest" in html_content
     assert "IELTS" in html_content and "CEFR" in html_content
-    assert "60:00" in html_content
-    assert "Listening (40 savol)" in html_content
-    assert "Reading (40 savol)" in html_content
-    assert "Writing (Task 1" in html_content
-    assert "150+" in html_content and "250+" in html_content
     assert "Mustaqil AI baholash va tayyorgarlik vositasi" in html_content
 
-    # Verify custom classes in styles.css
-    assert ".glass-card" in css_content
-    assert ".nav-q-btn" in css_content
-    assert ".timer-warning" in css_content
+    # Split-screen exam layout, navigation bar and timer warning
+    assert ".split" in css_content and ".resizer" in css_content
+    assert ".qbtn" in css_content
+    assert ".timer.is-low" in css_content
 
-    # Verify REST API endpoints & Vision OCR base64 handling in app.js
-    assert "/api/v1/tests/" in js_content
-    assert "/api/v1/submissions/objective" in js_content
-    assert "/api/v1/submissions/full-report" in js_content
-    assert "/api/v1/reports/" in js_content
+    # REST API endpoints, photo upload, voice recording; no answer keys or fake scores in the client
+    for endpoint in ("/tests/", "/submissions/objective", "/submissions/full-report", "/speaking/transcribe", "/quota", "/config"):
+        assert endpoint in js_content
     assert "readAsDataURL" in js_content
+    assert "getUserMedia" in js_content
+    assert "DEMO_OBJECTIVE_ANSWERS" not in js_content
+    assert "Henderson" not in js_content
