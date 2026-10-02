@@ -17,6 +17,7 @@ Provides full multimodal support via the official Google Gemini REST API (`gemin
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from typing import Any
@@ -54,6 +55,8 @@ from app.services.writing_evaluator import (
 logger = logging.getLogger(__name__)
 
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 FEEDBACK_LANGUAGE_NAMES = {"uz": "Uzbek (Latin script)", "ru": "Russian", "en": "English"}
 
@@ -99,14 +102,24 @@ async def _call_gemini_generate_content(
             "parts": [{"text": system_instruction}],
         }
 
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        response = await client.post(
-            url,
-            params={"key": resolved_key},
-            json=payload,
-        )
-        response.raise_for_status()
-        data = response.json()
+    # Gemini occasionally stalls or answers 429/5xx under load; one quick retry saves the candidate's attempt.
+    attempts = 2
+    async with httpx.AsyncClient(timeout=httpx.Timeout(40.0, connect=10.0)) as client:
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await client.post(url, params={"key": resolved_key}, json=payload)
+                if response.status_code in RETRYABLE_STATUS and attempt < attempts:
+                    logger.warning("Gemini returned %s; retrying.", response.status_code)
+                    await asyncio.sleep(2.0)
+                    continue
+                response.raise_for_status()
+                data = response.json()
+                break
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                if attempt == attempts:
+                    raise
+                logger.warning("Gemini request failed (%s); retrying.", type(exc).__name__)
+                await asyncio.sleep(1.0)
 
     candidates = data.get("candidates") or []
     if not candidates:
