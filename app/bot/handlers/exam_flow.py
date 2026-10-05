@@ -317,24 +317,47 @@ async def evaluate_writing_with_demo_fallback(
             task_number=2,
         )
 
-    # Layer 1: Always enforce anti-jailbreak & anti-cheating checks even in demo mode!
-    check_t1 = check_prompt_injection(t1_text, task_number=1, enforce_min_words=True)
-    if check_t1.is_detected:
+    # Layer 1: cheating / prompt injection / gibberish zeroes the whole paper. A short or missing
+    # task does NOT: the AI still marks the other task, and a missing task simply scores 0.
+    missing: set[int] = set()
+    for num, text in ((1, t1_text), (2, t2_text)):
+        if not text or not text.strip():
+            missing.add(num)
+            continue
+        check = check_prompt_injection(text, task_number=num, enforce_min_words=False)  # type: ignore[arg-type]
+        if check.is_detected:
+            return build_zero_score_result(
+                exam_type=request.exam_type,
+                reason_uz=check.explanation_uz,
+                original_snippet=text,
+            )
+    if missing == {1, 2}:
         return build_zero_score_result(
             exam_type=request.exam_type,
-            reason_uz=check_t1.explanation_uz,
-            original_snippet=t1_text or "[Task 1 bo'sh]",
+            reason_uz="Hech bir task uchun javob yuborilmadi. / No answer was submitted for either task.",
+            original_snippet="[Task 1 va Task 2 bo'sh]",
         )
+    t1_text = t1_text if 1 not in missing else NO_RESPONSE_PLACEHOLDER
+    t2_text = t2_text if 2 not in missing else NO_RESPONSE_PLACEHOLDER
+    result = await _evaluate_writing_texts(request, t1_text, t2_text, feedback_language)
+    if missing:
+        result = verify_and_recalculate_scores(result.model_copy(update={
+            "task_1_score": 0.0 if 1 in missing else result.task_1_score,
+            "task_2_score": 0.0 if 2 in missing else result.task_2_score,
+        }))
+    return result
 
-    check_t2 = check_prompt_injection(t2_text, task_number=2, enforce_min_words=True)
-    if check_t2.is_detected:
-        return build_zero_score_result(
-            exam_type=request.exam_type,
-            reason_uz=check_t2.explanation_uz,
-            original_snippet=t2_text or "[Task 2 bo'sh]",
-        )
 
-    assert t1_text is not None and t2_text is not None
+NO_RESPONSE_PLACEHOLDER = "[The candidate did not submit an answer for this task.]"
+
+
+async def _evaluate_writing_texts(
+    request: WritingEvaluationRequest,
+    t1_text: str,
+    t2_text: str,
+    feedback_language: str,
+) -> WritingEvaluationResult:
+    """Claude -> Gemini -> (optional) demo fallback for already screened texts."""
 
     if not is_placeholder_api_key(settings.ANTHROPIC_API_KEY):
         try:
@@ -474,19 +497,30 @@ async def evaluate_speaking_with_demo_fallback(
             txt = stt_res.transcribed_text
         texts[part_num] = (txt or "").strip()
 
-    # Enforce anti-jailbreak & minimum length checks across all 3 parts
-    for part_num in (1, 2, 3):
+    # Cheating / injection / gibberish zeroes everything; a short or missing part does not —
+    # the examiner marks what was said (a missing part is shown to the AI as "no response").
+    answered = [p for p in (1, 2, 3) if texts[p]]
+    for part_num in answered:
         check = check_speaking_prompt_injection(
             texts[part_num],
             part_number=part_num,  # type: ignore[arg-type]
-            enforce_min_words=True,
+            enforce_min_words=False,
         )
         if check.is_detected:
             return build_zero_speaking_result(
                 exam_type=request.exam_type,
                 reason_uz=check.explanation_uz,
-                original_snippet=texts[part_num] or f"[Part {part_num} bo'sh]",
+                original_snippet=texts[part_num],
             )
+    if not answered:
+        return build_zero_speaking_result(
+            exam_type=request.exam_type,
+            reason_uz="Hech bir savolga javob qayd etilmadi (mikrofonni tekshiring). / No spoken answers were recorded — please check your microphone.",
+            original_snippet="[Part 1-3 bo'sh]",
+        )
+    for part_num in (1, 2, 3):
+        if not texts[part_num]:
+            texts[part_num] = NO_RESPONSE_PLACEHOLDER.replace("task", "part")
 
     if not is_placeholder_api_key(settings.ANTHROPIC_API_KEY):
         try:
@@ -740,6 +774,7 @@ def _format_writing_result(result: WritingEvaluationResult, exam_type: str) -> s
         f"Task 1: {result.task_1_score:.1f} • Task 2: {result.task_2_score:.1f}\n"
         f"Task Achievement/Response {c.task_achievement:.1f} • Coherence &amp; Cohesion {c.coherence_cohesion:.1f}\n"
         f"Lexical Resource {c.lexical_resource:.1f} • Grammar {c.grammatical_range_accuracy:.1f}"
+        + (f"\n\n🧑‍🏫 {html.escape(result.examiner_summary)}" if result.examiner_summary else "")
         + _format_errors_and_vocab(result.detailed_errors, result.band_booster_vocabulary)
         + "\n\n<i>Unofficial AI mock assessment — not an official IELTS/CEFR result.</i>"
     )
@@ -866,6 +901,7 @@ async def _finish_speaking(message: Message, state: FSMContext) -> None:
         f"Fluency {c.fluency_coherence:.1f} • Vocabulary {c.lexical_resource:.1f} • "
         f"Grammar {c.grammatical_range_accuracy:.1f} • Pronunciation {c.pronunciation:.1f}\n\n"
         f"🗣 {html.escape(result.fluency_feedback_uz)}\n🔊 {html.escape(result.pronunciation_feedback_uz)}"
+        + (f"\n\n🧑‍🏫 {html.escape(result.examiner_summary)}" if result.examiner_summary else "")
         + _format_errors_and_vocab(result.detailed_errors, result.band_booster_vocabulary)
         + "\n\n<i>Unofficial AI mock assessment — not an official IELTS/CEFR result.</i>"
     )

@@ -116,11 +116,11 @@
 
   // ------------------------------------------------------------------ state
   const MODES = {
-    full: { label: 'Full mock test', sub: 'Listening, Reading, Writing & Speaking • ~2 h 45 min • PDF report', sections: ['listening', 'reading', 'writing', 'speaking'], ai: true },
-    listening: { label: 'Listening only', sub: 'Unlimited • instant score', sections: ['listening'], ai: false },
-    reading: { label: 'Reading only', sub: 'Unlimited • 60 minutes', sections: ['reading'], ai: false },
-    writing: { label: 'Writing only', sub: 'Task 1 + Task 2 • 60 min • AI feedback', sections: ['writing'], ai: true },
-    speaking: { label: 'Speaking only', sub: 'Parts 1–3 with voice • AI feedback', sections: ['speaking'], ai: true },
+    full: { label: 'Full mock test', sub: 'All 4 skills • 🤖 AI examiner marks Writing & Speaking • PDF report', sections: ['listening', 'reading', 'writing', 'speaking'], ai: true },
+    listening: { label: 'Listening only', sub: 'Unlimited • auto-marked with answer key', sections: ['listening'], ai: false },
+    reading: { label: 'Reading only', sub: 'Unlimited • 60 min • auto-marked', sections: ['reading'], ai: false },
+    writing: { label: 'Writing only', sub: 'Task 1 + 2 • 🤖 AI band score, mistakes & tips', sections: ['writing'], ai: true },
+    speaking: { label: 'Speaking only', sub: 'Parts 1–3 by voice • 🤖 AI band score & tips', sections: ['speaking'], ai: true },
   };
   const SECTION_INFO = {
     listening: { title: 'Listening', minutes: null, rules: ['You will hear each recording ONCE only.', 'The recording moves to the next part automatically.', 'Answer while you listen. You can move between parts using the bar at the bottom.', 'After the recording ends you have 2 minutes to check your answers.', 'Use headphones and check the volume before you start.'] },
@@ -1120,6 +1120,7 @@
     const vocab = evaluation.band_booster_vocabulary || [];
     return h('section', { class: 'card', style: 'margin-top:16px' },
       h('h3', { style: 'margin-top:0' }, title),
+      evaluation.examiner_summary ? h('div', { class: 'examiner-note' }, h('strong', {}, '🧑‍🏫 AI examiner: '), evaluation.examiner_summary) : null,
       h('div', { class: 'criteria' }, criteria.map(([label, val]) => h('div', { class: 'crit' }, h('span', {}, label), h('b', {}, Number(val).toFixed(1))))),
       evaluation.fluency_feedback_uz ? h('p', {}, '🗣 ', evaluation.fluency_feedback_uz) : null,
       evaluation.pronunciation_feedback_uz ? h('p', {}, '🔊 ', evaluation.pronunciation_feedback_uz) : null,

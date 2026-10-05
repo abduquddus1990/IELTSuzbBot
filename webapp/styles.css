@@ -7,15 +7,15 @@
   --ink: #111827;
   --muted: #5b6474;
   --line: #d8dee8;
-  --primary: #1d4ed8;
+  --primary: #c8102e;
   --primary-ink: #ffffff;
-  --primary-soft: #e6edff;
+  --primary-soft: #fdecee;
   --accent: #f59e0b;
   --ok: #059669;
   --ok-soft: #e7f7f0;
   --bad: #dc2626;
   --bad-soft: #fdecec;
-  --bar: #0f2a63;
+  --bar: #7a0c1e;
   --bar-ink: #ffffff;
   --radius: 12px;
   --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 4px 16px rgba(15, 23, 42, .06);
@@ -32,11 +32,11 @@ html[data-theme="dark"] {
   --ink: #e5e9f2;
   --muted: #9aa5b8;
   --line: #26324a;
-  --primary: #4f7dff;
-  --primary-soft: #1b2a4d;
+  --primary: #ff5a6e;
+  --primary-soft: #3a1520;
   --ok-soft: #0f2e25;
   --bad-soft: #3a1717;
-  --bar: #0a1630;
+  --bar: #3d0a14;
   color-scheme: dark;
 }
 
@@ -86,7 +86,7 @@ a { color: var(--primary); }
 .hero p { margin: 4px 0 0; color: var(--muted); }
 .logo-dot {
   width: 40px; height: 40px; border-radius: 11px; display: inline-grid; place-items: center; flex: none;
-  background: linear-gradient(135deg, #1d4ed8, #6d28d9); color: #fff; font-weight: 800; letter-spacing: -.5px;
+  background: linear-gradient(135deg, #e11d48, #8a0f24); color: #fff; font-weight: 800; letter-spacing: -.5px;
 }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; }
 .home-grid { display: grid; gap: 16px; }
@@ -121,7 +121,7 @@ a { color: var(--primary); }
 .exam-bar__center { text-align: center; }
 .timer { font: 700 22px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .04em; }
 .timer-label { font-size: 11px; opacity: .75; }
-.timer.is-low { color: #fca5a5; animation: pulse 1s ease-in-out infinite; }
+.timer.is-low { color: #fde68a; animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .55; } }
 .exam-bar__right { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
 .volume { display: flex; align-items: center; gap: 6px; font-size: 14px; }
@@ -312,3 +312,5 @@ body:not(.has-nav) .full-pane { height: calc(100dvh - var(--top-h) - env(safe-ar
 @media (max-width: 899px) {
   .passage p { text-align: left; }
 }
+
+.examiner-note { border-left: 4px solid var(--primary); background: var(--primary-soft); border-radius: 8px; padding: 12px 14px; margin: 0 0 14px; line-height: 1.6; }

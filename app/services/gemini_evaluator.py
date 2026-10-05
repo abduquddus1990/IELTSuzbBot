@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+NO_RESPONSE_PREFIX = "[The candidate did not submit"
 
 FEEDBACK_LANGUAGE_NAMES = {"uz": "Uzbek (Latin script)", "ru": "Russian", "en": "English"}
 
@@ -67,7 +68,11 @@ def feedback_language_instruction(feedback_language: str) -> str:
     return (
         f"FEEDBACK LANGUAGE: Write every `explanation_uz`, `fluency_feedback_uz` and "
         f"`pronunciation_feedback_uz` value in {name}. Keep the JSON field names unchanged; "
-        "`original`, `correction` and vocabulary items stay in English."
+        "`original`, `correction` and vocabulary items stay in English.\n"
+        f"Also add a top-level string field `examiner_summary` written in {name}: 3-5 sentences that explain "
+        "why the candidate received this band (mention specific strengths and weaknesses for each criterion, "
+        "quoting the candidate where useful) and give 2-3 concrete actions to reach the next band. "
+        "If a task or part says the candidate did not submit an answer, mark that task/part 0 and say so."
     )
 
 
@@ -220,8 +225,8 @@ async def evaluate_writing_via_gemini(
     feedback_language: str = "uz",
 ) -> WritingEvaluationResult:
     """Evaluate Writing Task 1 & Task 2 via Google Gemini using official IELTS/CEFR rubrics."""
-    t1_words = len(t1_text.split())
-    t2_words = len(t2_text.split())
+    t1_words = 0 if t1_text.startswith(NO_RESPONSE_PREFIX) else len(t1_text.split())
+    t2_words = 0 if t2_text.startswith(NO_RESPONSE_PREFIX) else len(t2_text.split())
     sandboxed_submissions = wrap_in_xml_sandbox(t1_text, t2_text)
 
     user_prompt = (

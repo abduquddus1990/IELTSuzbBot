@@ -123,3 +123,26 @@ def test_public_config_and_root_redirect():
     resp = client.get("/", follow_redirects=False)
     assert resp.status_code in (302, 307) and resp.headers["location"] == "/webapp/"
     assert client.get("/api/v1/payments/config").status_code == 404  # platform is free
+
+
+@pytest.mark.anyio
+async def test_missing_task_scores_zero_but_other_task_is_still_marked(monkeypatch):
+    from app.bot.handlers import exam_flow
+    from app.schemas.writing import CriteriaScores, WritingEvaluationRequest, WritingEvaluationResult
+
+    seen = {}
+
+    async def fake_ai(request, t1, t2, lang):
+        seen["t1"] = t1
+        return WritingEvaluationResult(
+            exam_type="IELTS", task_1_score=5.0, task_2_score=6.0, overall_writing_score=6.0, cefr_level="B2",
+            criteria_scores=CriteriaScores(task_achievement=6, coherence_cohesion=6, lexical_resource=6, grammatical_range_accuracy=6),
+            examiner_summary="ok",
+        )
+
+    monkeypatch.setattr(exam_flow, "_evaluate_writing_texts", fake_ai)
+    req = WritingEvaluationRequest.model_validate({"exam_type": "IELTS", "task_1_prompt": "Chart", "task_1_text": "", "task_2_prompt": "Essay", "task_2_text": "A real essay about education and technology."})
+    result = await exam_flow.evaluate_writing_with_demo_fallback(req)
+    assert seen["t1"] == exam_flow.NO_RESPONSE_PLACEHOLDER
+    assert result.task_1_score == 0.0 and result.task_2_score == 6.0
+    assert result.overall_writing_score > 0

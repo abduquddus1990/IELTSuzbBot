@@ -54,14 +54,14 @@ from app.schemas.writing import BandBoosterVocabulary, DetailedError
 # 1. COLOR PALETTE & CONSTANTS
 # =====================================================================
 
-COLOR_DEEP_NAVY = colors.HexColor("#0F172A")
+COLOR_DEEP_NAVY = colors.HexColor("#7A0C1E")  # brand maroon (red theme)
 COLOR_SLATE = colors.HexColor("#1E293B")
 COLOR_SLATE_MUTED = colors.HexColor("#475569")
 COLOR_ROYAL_GOLD = colors.HexColor("#D97706")
 COLOR_GOLD_LIGHT = colors.HexColor("#FEF3C7")
 COLOR_EMERALD = colors.HexColor("#059669")
 COLOR_EMERALD_LIGHT = colors.HexColor("#D1FAE5")
-COLOR_BLUE_ACCENT = colors.HexColor("#2563EB")
+COLOR_BLUE_ACCENT = colors.HexColor("#C8102E")
 COLOR_CRIMSON = colors.HexColor("#DC2626")
 COLOR_CRIMSON_LIGHT = colors.HexColor("#FEE2E2")
 COLOR_SOFT_NEUTRAL = colors.HexColor("#F8FAFC")
@@ -787,6 +787,14 @@ class PDFReportGeneratorService:
         )
         story.append(wb_banner)
         story.append(Spacer(1, 8))
+
+        # Examiner commentary (why this band, how to reach the next one)
+        for label, evaluation in (("Writing", report_data.writing_evaluation), ("Speaking", report_data.speaking_evaluation)):
+            summary = getattr(evaluation, "examiner_summary", "") if evaluation else ""
+            if summary:
+                story.append(Paragraph(f"AI EXAMINER COMMENT — {label.upper()}", styles["section_heading"]))
+                story.append(Paragraph(_clean_and_escape(summary), styles["cell_text"]))
+                story.append(Spacer(1, 8))
 
         # Collect Writing & Speaking errors
         combined_errors: list[tuple[str, DetailedError]] = []

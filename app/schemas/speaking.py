@@ -293,6 +293,11 @@ class SpeakingEvaluationResult(BaseModel):
         default_factory=list,
         description="Idiomatic and C1/Band 8+ spoken vocabulary upgrade suggestions.",
     )
+    examiner_summary: str = Field(
+        default="",
+        max_length=3000,
+        description="Short examiner commentary: overall performance and concrete steps to reach the next band.",
+    )
 
     @field_validator("exam_type", mode="before")
     @classmethod

@@ -553,6 +553,7 @@ def verify_and_recalculate_scores(
         criteria_scores=verified_criteria,
         detailed_errors=result.detailed_errors,
         band_booster_vocabulary=result.band_booster_vocabulary,
+        examiner_summary=result.examiner_summary,
     )
 
 

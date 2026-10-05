@@ -216,7 +216,7 @@ async def _send_pdf_to_telegram(chat_id: int, pdf_path: Path, scores: dict[str, 
 
 @router.get("/health", tags=["System"])
 async def api_v1_health() -> dict[str, str]:
-    return {"status": "ok", "service": settings.APP_NAME, "environment": settings.APP_ENV, "version": "0.2.1"}
+    return {"status": "ok", "service": settings.APP_NAME, "environment": settings.APP_ENV, "version": "0.3.0"}
 
 
 @router.get("/config", tags=["System"])

@@ -313,6 +313,7 @@ def test_writing_evaluation_result_schema_contract_and_recalculation() -> None:
         "criteria_scores",
         "detailed_errors",
         "band_booster_vocabulary",
+        "examiner_summary",
     }
 
     # Verify IELTS score > 9.0 is rejected by Pydantic validator
