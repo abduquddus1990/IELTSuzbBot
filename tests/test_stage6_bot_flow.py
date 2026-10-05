@@ -96,3 +96,47 @@ async def test_bot_respects_daily_limit(monkeypatch):
     await exam_flow.cb_select_exam_mode(_callback("mode:writing", msg), state)
     texts = [c.args[0] if c.args else c.kwargs.get("text", "") for c in msg.answer.await_args_list]
     assert any("Daily limit reached" in t for t in texts)
+
+
+def test_webhook_requires_secret_and_feeds_update_in_background(monkeypatch):
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from app import main
+
+    fed = []
+
+    async def fake_feed(bot, update):
+        fed.append(update.update_id)
+
+    monkeypatch.setattr(main.bot_dispatcher, "feed_update", fake_feed)
+    client = TestClient(main.app)
+    main.app.state.bot = MagicMock()
+    update = {"update_id": 777, "message": {"message_id": 1, "date": 0, "chat": {"id": 1, "type": "private"}, "text": "/start"}}
+    path = settings.BOT_WEBHOOK_PATH
+
+    assert client.post(path, json=update).status_code == 401
+    assert client.post(path, json=update, headers={"X-Telegram-Bot-Api-Secret-Token": "wrong"}).status_code == 401
+    ok = client.post(path, json=update, headers={"X-Telegram-Bot-Api-Secret-Token": main.webhook_secret()})
+    assert ok.status_code == 200
+    for _ in range(50):
+        if fed:
+            break
+        time.sleep(0.02)
+    assert fed == [777]
+    main.app.state.bot = None
+
+
+def test_bot_mode_selection(monkeypatch):
+    from app import main
+
+    monkeypatch.delenv("BOT_MODE", raising=False)
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://example.onrender.com")
+    assert main.bot_mode() == "webhook"
+    assert main.webhook_url() == "https://example.onrender.com" + settings.BOT_WEBHOOK_PATH
+    monkeypatch.delenv("RENDER_EXTERNAL_URL")
+    monkeypatch.setenv("RUN_BOT_POLLING_IN_WEB", "true")
+    assert main.bot_mode() == "polling"
+    monkeypatch.setenv("BOT_MODE", "off")
+    assert main.bot_mode() == "off"

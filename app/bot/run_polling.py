@@ -60,7 +60,15 @@ async def main() -> None:
 
     logger.info("Starting %s Telegram Bot in Long-Polling mode...", settings.APP_NAME)
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
+        info = await bot.get_webhook_info()
+        if info.url and "--force" not in sys.argv:
+            logger.error(
+                "This bot is served by a webhook (%s), i.e. the production server. Local polling would "
+                "disconnect it. Use a separate test bot token, or run with --force to take over.",
+                info.url,
+            )
+            sys.exit(1)
+        await bot.delete_webhook(drop_pending_updates=False)
         resolved_webapp = _resolve_webapp_url()
         if _is_public_https_url(resolved_webapp):
             try:
