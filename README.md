@@ -59,6 +59,8 @@ PDF hisobotlar disk o'chib ketishiga chidamli: yuklab olish havolasida imzolanga
 ## Kontent
 
 - `app/services/content/ielts_set1.py`, `cefr_set1.py` — Listening (audio skriptlari bilan) va Reading matnlari, savollar, javob kalitlari. Skriptlar va kalitlar mijozga yuborilmaydi.
+- IELTS to'plami haqiqiy Cambridge IELTS Academic darajasiga moslab **original** yozilgan: har bir Reading matni ~870–890 so'z, savollar parafraz qilingan, Listening'da chalg'ituvchi javoblar bor. Mualliflik huquqi bilan himoyalangan kitob matnlarini (masalan, Cambridge IELTS seriyasi) ilovaga ko'chirmang.
+- Qo'llab-quvvatlanadigan savol turlari (`app/services/content/builders.py`): `gap` (eslatma/gap/summary, `table` bilan — jadval), `mcq`, `matching` (abzats, shaxs, phrase bank A–J, xarita), `multi` ("Choose TWO letters", tartibsiz baholanadi), `tfng`, `ynng`.
 - `app/services/content/writing_charts.py` — 10 ta Task 1 grafigining ma'lumotlari. Ular `app/services/chart_renderer.py` orqali PNG'ga chiziladi va AI'ga ham uzatiladi, shunda AI nomzod keltirgan raqamlarni tekshira oladi.
 - `app/services/content/speaking_bank.py` — Speaking savollari banki.
 - Audio yaratish: `pip install edge-tts`, ffmpeg o'rnatilgan bo'lishi kerak, so'ng `python -m tools.generate_listening_audio`. Yangi to'plam qo'shish uchun xuddi shu tuzilishda fayl yarating va uni `SETS` ga qo'shing.

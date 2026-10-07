@@ -50,8 +50,15 @@ def group(
     box: list[dict[str, str]] | None = None,
     box_title: str | None = None,
     figure_svg: str | None = None,
+    table: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """kind: 'gap' | 'mcq' | 'matching' | 'tfng' | 'ynng'."""
+    """kind: 'gap' | 'mcq' | 'matching' | 'tfng' | 'ynng' | 'multi'.
+
+    - 'multi' = "Choose TWO letters": the group's questions share one prompt and the `box` options;
+      answers are order-independent (the client stores the chosen letters sorted, the key is sorted).
+    - `table` = {"columns": [...], "rows": [[cell, ...], ...]} for table completion; a cell marks a
+      gap with [[n]] where n is the question number.
+    """
     if kind == "tfng":
         box = TFNG
     elif kind == "ynng":
@@ -71,6 +78,8 @@ def group(
         out["box_title"] = box_title
     if figure_svg:
         out["figure_svg"] = figure_svg
+    if table:
+        out["table"] = table
     return out
 
 

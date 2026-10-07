@@ -376,8 +376,10 @@ def is_objective_answer_correct(
     if norm_user in variants:
         return True
     # Numbers (phone numbers, prices) are often typed with spaces or hyphens: "07894 32109".
+    # Numbers and codes (phone numbers, postcodes) are often typed with spaces or hyphens.
     compact_user = re.sub(r"[\s\-]", "", norm_user)
-    return compact_user.isdigit() and compact_user in {re.sub(r"[\s\-]", "", v) for v in variants}
+    coded = {re.sub(r"[\s\-]", "", v) for v in variants if any(ch.isdigit() for ch in v)}
+    return compact_user in coded
 
 
 class ObjectiveQuestionResult(BaseModel):

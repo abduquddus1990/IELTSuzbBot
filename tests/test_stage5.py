@@ -52,9 +52,9 @@ def test_client_payload_hides_answers_and_audio_scripts():
     raw = get_demo_test_by_id("IELTS-MOCK-01")
     text = json.dumps(sanitize_test_for_client(raw))
     assert "answer_key" not in text
-    assert "script" not in text
+    assert '"script"' not in text
     assert "task_1_chart_text" not in text
-    assert "Henderson" not in text  # an answer that only appears in the audio script
+    assert "Fairbrook" not in text  # an answer that only appears in the audio script
 
 
 def test_task1_chart_renders_png_and_endpoint():

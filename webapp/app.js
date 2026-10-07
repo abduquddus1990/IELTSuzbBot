@@ -498,6 +498,7 @@
       h('p', { class: 'group__range' }, `Questions ${group.range}`),
       h('p', { class: 'group__instr' }, group.instructions));
     if (group.figure_svg) node.append(h('div', { class: 'figure', html: group.figure_svg }));
+    if (group.kind === 'multi') return renderMultiGroup(section, group, node);
     const labelled = (group.box || []).some((o) => o.label && o.label !== o.value);
     if (group.box && labelled && !['tfng', 'ynng'].includes(group.kind)) {
       if (group.kind === 'gap') {
@@ -509,7 +510,65 @@
       }
     }
     if (group.title) node.append(h('div', { class: 'group__title' }, group.title));
+    if (group.table) {
+      node.append(renderTable(section, group.table));
+      return node;
+    }
     group.questions.forEach((q) => node.append(renderQuestion(section, group, q)));
+    return node;
+  }
+
+  // Table completion: cells mark gaps as [[n]].
+  function renderTable(section, table) {
+    const gapInput = (n) => h('span', { class: 'q q-inline', id: `q-${section}-${n}` },
+      h('b', { class: 'q__num q__num--inline' }, n),
+      h('input', {
+        class: 'gap-input', type: 'text', value: S.answers[section][String(n)] || '', autocomplete: 'off',
+        autocapitalize: 'off', spellcheck: 'false', 'aria-label': `Answer ${n}`,
+        oninput: (e) => setAnswer(section, n, e.target.value),
+        onfocus: () => { S.currentQ = n; renderNav(section); },
+      }));
+    const cell = (text, tag) => {
+      const td = h(tag);
+      String(text).split(/(\[\[\d+\]\])/).forEach((piece) => {
+        const m = /^\[\[(\d+)\]\]$/.exec(piece);
+        td.append(m ? gapInput(Number(m[1])) : piece);
+      });
+      return td;
+    };
+    return h('div', { class: 'table-wrap' }, h('table', { class: 'q-table' },
+      h('thead', {}, h('tr', {}, table.columns.map((c) => h('th', {}, c)))),
+      h('tbody', {}, table.rows.map((row) => h('tr', {}, row.map((c) => cell(c, 'td')))))));
+  }
+
+  // "Choose TWO letters": one prompt, two answer slots; selections are stored sorted so order doesn't matter.
+  function renderMultiGroup(section, group, node) {
+    const numbers = group.questions.map((q) => q.number).sort((a, b) => a - b);
+    const chosen = numbers.map((n) => S.answers[section][String(n)]).filter(Boolean);
+    const wrap = h('div', { class: 'q', id: `q-${section}-${numbers[0]}` },
+      h('div', { class: 'q__head' }, h('span', { class: 'q__num' }, `${numbers[0]}–${numbers[numbers.length - 1]}`),
+        h('div', { class: 'q__text' }, group.questions[0].prompt)));
+    // second number also scrolls here
+    const alias = h('span', { id: `q-${section}-${numbers[1]}` });
+    const list = h('div', { class: 'options' });
+    group.box.forEach((o) => {
+      const on = chosen.includes(o.value);
+      list.append(h('button', {
+        class: 'opt', type: 'button', role: 'checkbox', 'aria-pressed': String(on),
+        onclick: () => {
+          let next = chosen.slice();
+          if (on) next = next.filter((v) => v !== o.value);
+          else if (next.length < numbers.length) next.push(o.value);
+          else { toast(`Choose only ${numbers.length} letters. Unselect one first.`); return; }
+          next.sort();
+          numbers.forEach((n, i) => { S.answers[section][String(n)] = next[i] || ''; });
+          S.currentQ = numbers[0];
+          rerenderPart(section);
+        },
+      }, h('b', {}, o.value), h('span', {}, o.label)));
+    });
+    wrap.append(alias, list, h('p', { class: 'notice', style: 'margin:6px 0 0 40px' }, `Selected ${chosen.length} of ${numbers.length}`));
+    node.append(wrap);
     return node;
   }
 

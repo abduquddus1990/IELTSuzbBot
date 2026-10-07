@@ -314,3 +314,12 @@ body:not(.has-nav) .full-pane { height: calc(100dvh - var(--top-h) - env(safe-ar
 }
 
 .examiner-note { border-left: 4px solid var(--primary); background: var(--primary-soft); border-radius: 8px; padding: 12px 14px; margin: 0 0 14px; line-height: 1.6; }
+
+/* table completion */
+.table-wrap { overflow-x: auto; margin-top: 4px; }
+.q-table { border-collapse: collapse; width: 100%; font-size: 15px; }
+.q-table th, .q-table td { border: 1px solid var(--line); padding: 10px 12px; text-align: left; vertical-align: top; line-height: 2; }
+.q-table th { background: var(--surface-2); font-weight: 700; }
+.q-inline { display: inline; border: 0; padding: 0; white-space: nowrap; }
+.q-inline.is-current .gap-input { box-shadow: 0 2px 0 var(--accent); }
+.q__num--inline { display: inline-grid; min-width: 24px; height: 24px; font-size: 12px; vertical-align: middle; margin-left: 2px; }
