@@ -1,0 +1,25 @@
+# Keeps the free Render instance awake so the Telegram bot and Mini App answer instantly.
+# Render sleeps after 15 idle minutes; this pings the health endpoint every 10 minutes.
+# Note: GitHub pauses scheduled workflows after 60 days without commits — re-enable it in the
+# Actions tab (or push any commit) if that happens.
+name: Keep Render awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping health endpoint
+        run: |
+          for attempt in 1 2 3; do
+            if curl -fsS --max-time 90 https://ielts-cefr-mock-ai.onrender.com/api/v1/health; then
+              echo; echo "Server is awake"; exit 0
+            fi
+            echo "Attempt $attempt failed, retrying..."; sleep 20
+          done
+          echo "Server did not respond"; exit 1
